@@ -1,5 +1,7 @@
 ## IDF Component Manager Manifest File
 dependencies:
+  espressif/cjson: "*"
   lvgl/lvgl:
     version: "^9.*"
     public: true
+  

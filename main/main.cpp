@@ -1,10 +1,18 @@
+// main.cpp
 
-#include "bsp/esp-bsp.h"
-#include "bsp/display.h"
-#include "bsp_board_extra.h"
+// this is where it all begins.
+// really just basic setup and then it all is handled by the statemachine.cpp
 
-#include "esp_log.h"
+#include <bsp/esp-bsp.h>
+#include <bsp/display.h>
+#include <bsp_board_extra.h>
+#include <esp_log.h>
 
+// methods called and defined in this module
+static void setup();
+static void setupDisplay();
+
+#include "DisplayCommunications.h"
 #include "splashscreen.h"
 
 static const char *TAG = "WineSentry";
@@ -13,6 +21,35 @@ extern "C" void app_main(void)
 {
     ESP_LOGI(TAG, "WineSentry starting");
 
+    setup();
+
+    ESP_LOGI(TAG, "WineSentry application ready");
+
+    // Next:
+    // winesentry::start_state_machine();
+}
+
+static void setup()
+{
+    setupDisplay();
+
+    play_splash_screen();
+
+    // Start communications immediately.
+    ESP_ERROR_CHECK(InitializeDisplayCommunications());
+
+    xTaskCreate(
+        DisplayCommunicationsLoop,
+        "DisplayUART",
+        4096,
+        nullptr,
+        5,
+        nullptr
+    );
+}
+
+static void setupDisplay()
+{
     bsp_display_cfg_t cfg = {};
 
     #pragma GCC diagnostic push
@@ -31,11 +68,4 @@ extern "C" void app_main(void)
 
     bsp_display_start_with_config(&cfg);
     bsp_display_backlight_on();
-
-    winesentry::play_splash_screen();
-
-    ESP_LOGI(TAG, "WineSentry application ready");
-
-    // Next:
-    // winesentry::start_state_machine();
 }

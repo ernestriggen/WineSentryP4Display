@@ -1,26 +1,28 @@
+// splashscreen.cpp
 
-#include "splashscreen.h"
+// A LOT OF WORK went into this splash.  Sure hope people love it.
+// 100% of the code is chat
 
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
-#include "esp_log.h"
-#include "esp_err.h"
-#include "esp_spiffs.h"
-#include "esp_heap_caps.h"
-#include "esp_timer.h"
+#include <esp_log.h>
+#include <esp_err.h>
+#include <esp_spiffs.h>
+#include <esp_heap_caps.h>
+#include <esp_timer.h>
 
-#include "driver/jpeg_decode.h"
+#include <driver/jpeg_decode.h>
 
-#include "lvgl.h"
-#include "bsp/esp-bsp.h"
-#include "bsp/display.h"
-
+#include <lvgl.h>
+#include <bsp/esp-bsp.h>
+#include <bsp/display.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-namespace winesentry {
+#include "splashscreen.h"
+
 
 static const char *TAG = "WineSentrySplash";
 
@@ -317,8 +319,12 @@ static void show_next_screen()
     lv_obj_t *screen = lv_screen_active();
 
     // Removes the splash image object.
-    lv_obj_clean(screen);
-
+    if (splash_object != nullptr)
+    {
+        lv_obj_delete(splash_object);
+        splash_object = nullptr;
+    }
+    
     lv_obj_set_style_bg_color(
         screen,
         lv_color_black(),
@@ -521,5 +527,3 @@ void play_splash_screen()
 
     ESP_LOGI(TAG, "WineSentry splash finished");
 }
-
-} // namespace winesentry

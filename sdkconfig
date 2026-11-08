@@ -4292,6 +4292,15 @@ CONFIG_ADC_BUTTON_SAMPLE_TIMES=1
 # end of IoT Button
 
 #
+# cJSON
+#
+# default:
+CONFIG_CJSON_NESTING_LIMIT=1000
+# default:
+CONFIG_CJSON_CIRCULAR_LIMIT=10000
+# end of cJSON
+
+#
 # CMake Utilities
 #
 # default:
@@ -4458,6 +4467,13 @@ CONFIG_USB_HOST_SUSPEND_ENTRY_MS=20
 # default:
 CONFIG_USB_OTG_SUPPORTED=y
 # end of USB-OTG
+
+#
+# zlib Configurations
+#
+# default:
+CONFIG_ZLIB_PREFER_PSRAM=y
+# end of zlib Configurations
 
 #
 # LVGL

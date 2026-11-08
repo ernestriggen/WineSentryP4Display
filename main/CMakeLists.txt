@@ -3,8 +3,13 @@ file(GLOB_RECURSE LV_DEMOS_SOURCES ${LV_DEMO_DIR}/*.c)
 
 idf_component_register(
     SRCS
+        displaycommunications.cpp
         main.cpp
+        models/displaycommunicationsmodels.cpp
+        models/winesentrystatemachine.cpp
+        ping.cpp
         splashscreen.cpp
+        statusbar.cpp
         ${LV_DEMOS_SOURCES}
 
     INCLUDE_DIRS
@@ -14,6 +19,7 @@ idf_component_register(
     REQUIRES
         bsp_extra
         esp_driver_jpeg  
+        esp_driver_uart
         nvs_flash
         spiffs
         waveshare__esp32_p4_wifi6_touch_lcd_xc
