@@ -4,12 +4,14 @@ file(GLOB_RECURSE LV_DEMOS_SOURCES ${LV_DEMO_DIR}/*.c)
 idf_component_register(
     SRCS
         displaycommunications.cpp
+        line.cpp
         main.cpp
         models/displaycommunicationsmodels.cpp
         models/winesentrystatemachine.cpp
         ping.cpp
         splashscreen.cpp
         statusbar.cpp
+        winereading.cpp
         ${LV_DEMOS_SOURCES}
 
     INCLUDE_DIRS

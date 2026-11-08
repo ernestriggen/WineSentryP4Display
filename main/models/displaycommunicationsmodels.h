@@ -65,3 +65,24 @@ protected:
     cJSON* PayloadToJson() const override;
     bool PayloadFromJson(const cJSON* payload) override;
 };
+
+
+
+///////////////////////////////////////////////////////////////////////////////////////////
+// Complete wine reading received from the sensor.
+// The JSON is forwarded unchanged to the P4.
+//
+class WineReadingMessage : public WineSentryMessage
+{
+public:
+    std::string data;
+
+    WineReadingMessage()
+        {
+        messageType = "WINE_READING";
+        }
+
+protected:
+    cJSON* PayloadToJson() const override;
+    bool PayloadFromJson(const cJSON* payload) override;
+};

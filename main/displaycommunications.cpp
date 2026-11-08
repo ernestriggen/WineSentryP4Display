@@ -29,10 +29,12 @@
 #include <cJSON.h>
 
 #include "DisplayCommunications.h"
+#include "line.h"
 #include "models/displaycommunicationsmodels.h"
 #include "models/winesentrystatemachine.h"
 #include "ping.h"
 #include "statusbar.h"
+#include "winereading.h"
 
 enum class DisplayMessageType
 {
@@ -40,6 +42,7 @@ enum class DisplayMessageType
     STATUSBAR,
     LINE,
     PING, 
+    WINE_READING,
     UNKNOWN
 };
 
@@ -179,23 +182,27 @@ void DisplayCommunicationsLoop(void* parameter)
 
                             case DisplayMessageType::LINE:
                                 {
-                                // LINE handler will go here.
-                                ESP_LOGI(TAG, "LINE message received");
+                                LineHandle(receivedJson.c_str());
                                 break;
                                 }
 
-case DisplayMessageType::PING:
-  {
-  const cJSON* payload =
-      cJSON_GetObjectItemCaseSensitive(root, "payload");
+                            case DisplayMessageType::WINE_READING:
+                                {
+                                WineReadingHandle(receivedJson.c_str());
+                                break;
+                                }
 
-  const cJSON* sleep =
-      cJSON_GetObjectItemCaseSensitive(payload, "goingToSleep");
+                            case DisplayMessageType::PING:
+                                {
+                                const cJSON* payload = cJSON_GetObjectItemCaseSensitive(root, "payload");
 
-  PingHandle(cJSON_IsTrue(sleep));
+                                const cJSON* sleep = cJSON_GetObjectItemCaseSensitive(payload, "goingToSleep");
 
-  break;
-  }
+                                PingHandle(cJSON_IsTrue(sleep));
+
+                                break;
+                                }
+
                             default:
                                 {
                                 ESP_LOGW(TAG, "Unknown message type: %s", typeString ? typeString : "<missing>");

@@ -205,3 +205,42 @@ bool PingMessage::PayloadFromJson(const cJSON* payload)
 
     return true;
 }
+
+
+///////////////////////////////////////////////////////////////////////////////////////////
+// Serialize the wine reading into the message payload.
+//
+cJSON* WineReadingMessage::PayloadToJson() const
+    {
+    cJSON* payload = cJSON_CreateObject();
+
+    if (payload == nullptr)
+        return nullptr;
+
+    if (cJSON_AddStringToObject(payload, "data", data.c_str()) == nullptr)
+        {
+        cJSON_Delete(payload);
+        return nullptr;
+        }
+
+    return payload;
+    }
+
+
+///////////////////////////////////////////////////////////////////////////////////////////
+// Extract the wine reading JSON from the message payload.
+//
+bool WineReadingMessage::PayloadFromJson(const cJSON* payload)
+    {
+    if (!cJSON_IsObject(payload))
+        return false;
+
+    const cJSON* item = cJSON_GetObjectItemCaseSensitive(payload, "data");
+
+    if (!cJSON_IsString(item) || item->valuestring == nullptr)
+        return false;
+
+    data = item->valuestring;
+
+    return true;
+    }
