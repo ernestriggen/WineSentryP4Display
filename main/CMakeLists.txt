@@ -3,7 +3,12 @@ file(GLOB_RECURSE LV_DEMOS_SOURCES ${LV_DEMO_DIR}/*.c)
 
 idf_component_register(
     SRCS
+        arc_text.cpp
         displaycommunications.cpp
+        displaydashboardbackground.cpp
+        displaydashboardscreen.cpp
+        displayhelpers.cpp
+        displayscreenmanager.cpp
         line.cpp
         main.cpp
         models/displaycommunicationsmodels.cpp
@@ -12,6 +17,7 @@ idf_component_register(
         splashscreen.cpp
         statusbar.cpp
         winereading.cpp
+        winereadingicons.cpp
         ${LV_DEMOS_SOURCES}
 
     INCLUDE_DIRS

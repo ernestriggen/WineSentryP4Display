@@ -63,6 +63,9 @@ static DisplayMessageType GetDisplayMessageType(const char* type)
     if (strcmp(type, "PING") == 0)
         return DisplayMessageType::PING;
 
+    if (strcmp(type, "WINE_READING") == 0)
+        return DisplayMessageType::WINE_READING;
+
     return DisplayMessageType::UNKNOWN;
 }
 

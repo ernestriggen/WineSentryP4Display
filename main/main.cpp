@@ -13,6 +13,7 @@ static void setup();
 static void setupDisplay();
 
 #include "DisplayCommunications.h"
+#include "displayscreenmanager.h"
 #include "splashscreen.h"
 
 static const char *TAG = "WineSentry";
@@ -35,6 +36,8 @@ static void setup()
 
     play_splash_screen();
 
+    DisplayScreenManagerInitialize();
+
     // Start communications immediately.
     ESP_ERROR_CHECK(InitializeDisplayCommunications());
 
@@ -53,7 +56,7 @@ static void setupDisplay()
     bsp_display_cfg_t cfg = {};
 
     #pragma GCC diagnostic push
-    #pragma GCC diagnostic ignored "-Wm issing-field-initializers"
+    #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
 
     cfg.lv_adapter_cfg = ESP_LV_ADAPTER_DEFAULT_CONFIG();
 
@@ -65,6 +68,8 @@ static void setupDisplay()
     cfg.touch_flags.swap_xy = 0;
     cfg.touch_flags.mirror_x = 0;
     cfg.touch_flags.mirror_y = 0;
+
+    
 
     bsp_display_start_with_config(&cfg);
     bsp_display_backlight_on();

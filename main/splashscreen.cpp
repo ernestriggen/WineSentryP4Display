@@ -313,42 +313,17 @@ static void display_frame(int buffer_index)
 // ------------------------------------------------------------
 
 static void show_next_screen()
-{
+    {
     bsp_display_lock(-1);
 
-    lv_obj_t *screen = lv_screen_active();
-
-    // Removes the splash image object.
     if (splash_object != nullptr)
-    {
+        {
         lv_obj_delete(splash_object);
         splash_object = nullptr;
-    }
-    
-    lv_obj_set_style_bg_color(
-        screen,
-        lv_color_black(),
-        0
-    );
-
-    // Temporary placeholder for the state-machine interface.
-    lv_obj_t *label = lv_label_create(screen);
-
-    lv_label_set_text(label, "WineSentry");
-
-    lv_obj_set_style_text_color(
-        label,
-        lv_color_hex(0xD4AF37),
-        0
-    );
-
-    lv_obj_center(label);
-
-    splash_object = nullptr;
+        }
 
     bsp_display_unlock();
-}
-
+    }
 // ------------------------------------------------------------
 // Animation playback
 // ------------------------------------------------------------
