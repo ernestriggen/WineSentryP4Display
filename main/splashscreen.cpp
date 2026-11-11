@@ -33,7 +33,7 @@ static const char *TAG = "WineSentrySplash";
 static constexpr int WIDTH = 800;
 static constexpr int HEIGHT = 800;
 static constexpr int FRAME_COUNT = 240;
-static constexpr int FRAME_RATE = 24;
+static constexpr int FRAME_RATE = 26;
 
 static constexpr size_t FRAME_BYTES =
     WIDTH * HEIGHT * 2;
@@ -377,6 +377,18 @@ static void play_animation()
 
         display_frame(buffer_index);
         frames_displayed++;
+
+        // The first splash frame has been submitted to LVGL.
+        // Allow the display task to render it before
+        // illuminating the LCD.
+        if (frame == 1)
+            {
+            vTaskDelay(pdMS_TO_TICKS(100));
+
+            bsp_display_backlight_on();
+
+            ESP_LOGI(TAG, "Splash first frame ready; backlight enabled");
+            }        
 
         if (frame == 1 || frame % 24 == 0) {
             ESP_LOGI(TAG,

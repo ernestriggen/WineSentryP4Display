@@ -72,5 +72,5 @@ static void setupDisplay()
     
 
     bsp_display_start_with_config(&cfg);
-    bsp_display_backlight_on();
+    bsp_display_backlight_off();
 }

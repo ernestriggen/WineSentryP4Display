@@ -13,6 +13,7 @@
 #include <cstring>
 
 #include "arc_text.h"
+#include "statusbar.h"
 #include "winereading.h"
 #include "winereadingicons.h"
 
@@ -695,6 +696,13 @@ ESP_LOGI(TAG, "WineReadingHandle ENTERED");
     {
         reading = data;
     }
+
+    // squirrel away the luxSenseID
+const char* luxSenseID = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(reading, "LuxSenseID"));    
+setStatusBarLuxSenseID(luxSenseID);
+
+const char* sensorModel = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(reading, "SensorModel"));
+setStatusBarSensorModel(sensorModel);
 
 if (cJSON_IsString(data) && data->valuestring != nullptr)
 {

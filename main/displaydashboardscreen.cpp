@@ -6,6 +6,7 @@
 
 #include "displaydashboardbackground.h"
 #include "displaydashboardscreen.h"
+#include "statusbar.h"
 #include "winereading.h"
 
 static const char* TAG = "DASHBOARD";
@@ -54,6 +55,7 @@ void DisplayDashboardInitialize()
     if (backgroundReady)
     {
         WineReadingAttachScreen(dashboardScreen);
+        StatusBarInit(dashboardScreen);
     }
     else
     {
