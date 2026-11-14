@@ -9,11 +9,13 @@ idf_component_register(
         displaydashboardscreen.cpp
         displayhelpers.cpp
         displayscreenmanager.cpp
-        line.cpp
+        lowerstatus.cpp
         main.cpp
+        messages.cpp
         models/displaycommunicationsmodels.cpp
         models/winesentrystatemachine.cpp
         ping.cpp
+        rightstatus.cpp
         splashscreen.cpp
         statusbar.cpp
         winereading.cpp

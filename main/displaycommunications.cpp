@@ -22,14 +22,14 @@
 #include <driver/uart.h>
 #include <esp_log.h>
 #include <freertos/FreeRTOS.h>
-#include <freertos/task.h>
+//#include <freertos/task.h>
 #include <cJSON.h>
 #include <string>
 #include <cstring>
 #include <cJSON.h>
 
 #include "DisplayCommunications.h"
-#include "line.h"
+#include "messages.h"
 #include "models/displaycommunicationsmodels.h"
 #include "models/winesentrystatemachine.h"
 #include "ping.h"
@@ -185,7 +185,7 @@ void DisplayCommunicationsLoop(void* parameter)
 
                             case DisplayMessageType::LINE:
                                 {
-                                LineHandle(receivedJson.c_str());
+                                MessagesHandle(receivedJson.c_str());
                                 break;
                                 }
 

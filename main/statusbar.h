@@ -14,3 +14,6 @@ void StatusBarHandle(const char* json);
 void setStatusBarLuxSenseID(const char* luxSenseID);
 // Update the sensor model from an incoming WINE_READING.
 void setStatusBarSensorModel(const char* sensorModel);
+
+int StatusBarGetSensitivity();
+const char* StatusBarGetSensorModel();

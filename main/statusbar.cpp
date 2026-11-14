@@ -21,8 +21,10 @@
 #include "arc_text.h"
 #include "cJSON.h"
 #include "esp_log.h"
+#include "lowerstatus.h"
 #include "lvgl.h"
 #include "models/statusmodels.h"
+#include "rightstatus.h"
 #include "statusbar.h"
 
 static const char* TAG = "StatusBar";
@@ -556,6 +558,7 @@ lv_obj_set_scrollable(
 // /////////////////////////////////////////////////////////////////////////////
 
 
+
 void StatusBarHandle(const char* json)
 {
     if (json == nullptr)
@@ -612,36 +615,72 @@ void StatusBarHandle(const char* json)
     const cJSON* sensitivityField =
         cJSON_GetObjectItemCaseSensitive(status, "S");
 
-    // this will confuse me later --- sometimes S3 sends a fake STATSUBAR message
-    // that just has it's S3 firmware version number in it.
-    // S3 firmware version.
-    // The S3 periodically supplies its own firmware information
-    // using a STATUSBAR message containing only "S3V".
-    // this will confuse me later --- sometimes S3 sends a fake STATSUBAR message
-    // that just has it's S3 firmware version number in it.
+    // The S3 uses the existing STATUSBAR message type for
+    // two independent payloads:
+    //
+    // Sensor:
+    //     {"N":"Genesis","V":"3.0.1","S":15,...}
+    //
+    // S3 firmware announcement:
+    //     {"S3V":"1.0.0"}
+    //
+    // Only fields present in the message are updated.
+
     const char* s3Version =
-    cJSON_GetStringValue(
-        cJSON_GetObjectItemCaseSensitive(status, "S3V")
-    );
+        cJSON_GetStringValue(
+            cJSON_GetObjectItemCaseSensitive(status, "S3V")
+        );
 
+    // Extract Wi-Fi, MQTT and RSSI information.
 
-    if (s3Version != nullptr && firmware.s3Version != s3Version)
-        {
-        firmware.s3Version = s3Version;
-    ESP_LOGI(
-        TAG,
-        "S3 firmware version received: %s",
-        firmware.s3Version.c_str()
-    );
-        }
+    const char* wifi =
+        cJSON_GetStringValue(
+            cJSON_GetObjectItemCaseSensitive(status, "W")
+        );
+
+    const char* mqtt =
+        cJSON_GetStringValue(
+            cJSON_GetObjectItemCaseSensitive(status, "M")
+        );
+
+    const cJSON* rssiField =
+        cJSON_GetObjectItemCaseSensitive(status, "R");
+
+    const char* powerSource = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(status, "P"));
+    if (powerSource != nullptr)
+        RightStatusSetPowerSource(powerSource);
+
+// Extract sensor battery percentage.
+
+const cJSON* batteryField =
+    cJSON_GetObjectItemCaseSensitive(status, "B");
+
+bool hasBattery = cJSON_IsNumber(batteryField);
+
+int battery = hasBattery
+    ? batteryField->valueint
+    : -1;        
 
     bool hasName = name != nullptr;
     bool hasVersion = version != nullptr;
     bool hasSensitivity = cJSON_IsNumber(sensitivityField);
+    bool hasS3Version = s3Version != nullptr;
+    bool hasRSSI = cJSON_IsNumber(rssiField);
 
-    // Update our status models while holding the display lock.
+    int rssi = hasRSSI
+        ? rssiField->valueint
+        : -127;
 
-    if (hasName || hasVersion || hasSensitivity || s3Version != nullptr)
+    // Update the models and connectivity indicators
+    // while holding the LVGL display lock.
+
+    if (hasName ||
+        hasVersion ||
+        hasSensitivity ||
+        hasS3Version ||
+        wifi != nullptr ||
+        mqtt != nullptr ||
+        hasRSSI)
     {
         if (bsp_display_lock(1000) == ESP_OK)
         {
@@ -665,21 +704,33 @@ void StatusBarHandle(const char* json)
                 changed = true;
             }
 
-            // Sensor sensitivity.
+// Sensor sensitivity.
 
-            if (hasSensitivity)
+if (hasSensitivity &&
+    identity.sensitivity != sensitivityField->valueint)
+{
+    identity.sensitivity = sensitivityField->valueint;
+
+    RightStatusRender();
+}
+
+            // S3 firmware version.
+
+            if (hasS3Version &&
+                firmware.s3Version != s3Version)
             {
-                identity.sensitivity = sensitivityField->valueint;
-                changed = true;
-            }
-
-            if (s3Version != nullptr && firmware.s3Version != s3Version)
-                {
                 firmware.s3Version = s3Version;
                 changed = true;
-                }            
 
-            // Update the display only when visible information changes.
+                ESP_LOGI(
+                    TAG,
+                    "S3 firmware version received: %s",
+                    firmware.s3Version.c_str()
+                );
+            }
+
+            // Refresh the status arcs only when displayed
+            // information has changed.
 
             if (changed)
             {
@@ -694,6 +745,18 @@ void StatusBarHandle(const char* json)
                 );
             }
 
+            // Update the Wi-Fi and MQTT icons independently.
+            //
+            // Missing values preserve the last reported state,
+            // including during normal sensor deep sleep.
+
+            LowerStatusSetConnectivity(
+                wifi,
+                mqtt,
+                hasRSSI,
+                rssi
+            );
+
             bsp_display_unlock();
         }
         else
@@ -705,9 +768,24 @@ void StatusBarHandle(const char* json)
         }
     }
 
+    // RightStatusSetBatteryPercent() acquires its own LVGL lock.
+// Therefore, call it outside our existing locked section.
+
+if (hasBattery && battery >= 0 && battery <= 100)
+{
+    RightStatusSetBatteryPercent(battery);
+
+    ESP_LOGI(
+        TAG,
+        "Battery percentage received: %d%%",
+        battery
+    );
+}
+
     cJSON_Delete(status);
     cJSON_Delete(root);
 }
+
 
 void setStatusBarLuxSenseID(const char* luxSenseID)
 {
@@ -751,6 +829,9 @@ void setStatusBarSensorModel(const char* sensorModel)
                 "Sensor model updated: %s",
                 identity.sensorModel.c_str()
             );
+
+            // Refresh the right-side display.
+            RightStatusRender();
         }
 
         bsp_display_unlock();
@@ -823,4 +904,13 @@ static void StatusSwapTimerCallback(lv_timer_t* timer)
 
     // Right side.
     RenderDisplayFirmwareInformation();
+}
+
+int StatusBarGetSensitivity()
+{
+    return identity.sensitivity;
+}
+const char* StatusBarGetSensorModel()
+{
+    return identity.sensorModel.c_str();
 }

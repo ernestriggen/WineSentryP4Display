@@ -6,6 +6,10 @@
 
 #include "displaydashboardbackground.h"
 #include "displaydashboardscreen.h"
+#include "lowerstatus.h"
+#include "messages.h"
+#include "ping.h"
+#include "rightstatus.h"
 #include "statusbar.h"
 #include "winereading.h"
 
@@ -49,19 +53,31 @@ void DisplayDashboardInitialize()
     lv_obj_set_scrollable(dashboardScreen, false);
 
     // Create the luxury WineSentry background.
-    bool backgroundReady =
-        DisplayDashboardBackgroundInitialize(dashboardScreen);
+    bool backgroundReady = DisplayDashboardBackgroundInitialize(dashboardScreen);
 
     if (backgroundReady)
     {
+        MessagesInit(dashboardScreen);
         WineReadingAttachScreen(dashboardScreen);
         StatusBarInit(dashboardScreen);
+        if (!LowerStatusInit(dashboardScreen))
+            {
+            ESP_LOGE(TAG, "Lower status initialization failed");
+            }
+        if (!PingInit(dashboardScreen))
+            {
+            ESP_LOGE(TAG, "PING indicator initialization failed");
+            }            
     }
     else
     {
         ESP_LOGE(TAG, "Dashboard background unavailable");
     }
     
+    if (!RightStatusInit(dashboardScreen))
+        {
+        ESP_LOGE(TAG, "Right status initialization failed");
+        }
 
     bsp_display_unlock();
 

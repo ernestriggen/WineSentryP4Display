@@ -10,4 +10,18 @@ set(EXTRA_COMPONENT_DIRS
 
 add_compile_options(-Wno-format)
 project(winesentryP4display)
+# LVGL adapter uses legacy LVGL header paths.
+# Permit their deprecation warnings without failing the build.
+
+idf_component_get_property(
+    lvgl_adapter_lib
+    espressif__esp_lvgl_adapter
+    COMPONENT_LIB
+)
+
+target_compile_options(
+    ${lvgl_adapter_lib}
+    PRIVATE
+    -Wno-error=cpp
+)
 spiffs_create_partition_image(storage splash FLASH_IN_PROJECT)

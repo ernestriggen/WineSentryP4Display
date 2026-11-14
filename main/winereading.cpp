@@ -704,6 +704,7 @@ setStatusBarLuxSenseID(luxSenseID);
 const char* sensorModel = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(reading, "SensorModel"));
 setStatusBarSensorModel(sensorModel);
 
+
 if (cJSON_IsString(data) && data->valuestring != nullptr)
 {
     ESP_LOGI(TAG, "WINE_READING JSON: %s", data->valuestring);
