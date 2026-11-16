@@ -1,6 +1,5 @@
 // displayscreenmanager.cpp
 
-#include <bsp/display.h>
 #include <bsp/esp-bsp.h>
 #include <esp_err.h>
 #include <esp_log.h>

@@ -244,3 +244,67 @@ bool WineReadingMessage::PayloadFromJson(const cJSON* payload)
 
     return true;
     }
+
+cJSON* WinePresentationMessage::PayloadToJson() const
+{
+    cJSON* payload = cJSON_CreateObject();
+
+    if (payload == nullptr)
+    {
+        return nullptr;
+    }
+
+    bool valid =
+        cJSON_AddStringToObject(payload, "wineName", wineName.c_str()) != nullptr &&
+        cJSON_AddStringToObject(payload, "winery", winery.c_str()) != nullptr &&
+        cJSON_AddStringToObject(payload, "vintage", vintage.c_str()) != nullptr &&
+        cJSON_AddStringToObject(payload, "region", region.c_str()) != nullptr &&
+        cJSON_AddStringToObject(payload, "cuvee", cuvee.c_str()) != nullptr &&
+        cJSON_AddNumberToObject(payload, "price", price) != nullptr &&
+        cJSON_AddStringToObject(payload, "aromaKeywords", aromaKeywords.c_str()) != nullptr &&
+        cJSON_AddStringToObject(payload, "tasteKeywords", tasteKeywords.c_str()) != nullptr &&
+        cJSON_AddStringToObject(payload, "labelJpegBase64", labelJpegBase64.c_str()) != nullptr;
+
+    if (!valid)
+    {
+        cJSON_Delete(payload);
+        return nullptr;
+    }
+
+    return payload;
+}
+
+bool WinePresentationMessage::PayloadFromJson(const cJSON* payload)
+{
+    if (!cJSON_IsObject(payload))
+    {
+        return false;
+    }
+
+    auto readString = [payload](const char* key) -> std::string
+    {
+        const char* value = cJSON_GetStringValue(
+            cJSON_GetObjectItemCaseSensitive(payload, key)
+        );
+
+        return value != nullptr ? value : "";
+    };
+
+    wineName = readString("wineName");
+    winery = readString("winery");
+    vintage = readString("vintage");
+    region = readString("region");
+    cuvee = readString("cuvee");
+    aromaKeywords = readString("aromaKeywords");
+    tasteKeywords = readString("tasteKeywords");
+    labelJpegBase64 = readString("labelJpegBase64");
+
+    const cJSON* priceField =
+        cJSON_GetObjectItemCaseSensitive(payload, "price");
+
+    price = cJSON_IsNumber(priceField)
+        ? priceField->valuedouble
+        : 0.0;
+
+    return !wineName.empty();
+}    

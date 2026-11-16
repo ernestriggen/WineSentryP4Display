@@ -11,6 +11,7 @@
 #include "ping.h"
 #include "rightstatus.h"
 #include "statusbar.h"
+#include "wineglass.h"
 #include "winereading.h"
 
 static const char* TAG = "DASHBOARD";
@@ -78,6 +79,8 @@ void DisplayDashboardInitialize()
         {
         ESP_LOGE(TAG, "Right status initialization failed");
         }
+
+    WineGlassInitialize(dashboardScreen);        
 
     bsp_display_unlock();
 

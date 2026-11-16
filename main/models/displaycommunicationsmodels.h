@@ -86,3 +86,29 @@ protected:
     cJSON* PayloadToJson() const override;
     bool PayloadFromJson(const cJSON* payload) override;
 };
+
+class WinePresentationMessage : public WineSentryMessage
+{
+public:
+    std::string wineName;
+    std::string winery;
+    std::string vintage;
+    std::string region;
+    std::string cuvee;
+
+    double price = 0.0;
+
+    std::string aromaKeywords;
+    std::string tasteKeywords;
+
+    std::string labelJpegBase64;
+
+    WinePresentationMessage()
+    {
+        messageType = "WINE_PRESENTATION";
+    }
+
+protected:
+    cJSON* PayloadToJson() const override;
+    bool PayloadFromJson(const cJSON* payload) override;
+};

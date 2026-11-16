@@ -1,6 +1,3 @@
-set(LV_DEMO_DIR ../managed_components/lvgl__lvgl/demos)
-file(GLOB_RECURSE LV_DEMOS_SOURCES ${LV_DEMO_DIR}/*.c)
-
 idf_component_register(
     SRCS
         arc_text.cpp
@@ -9,18 +6,24 @@ idf_component_register(
         displaydashboardscreen.cpp
         displayhelpers.cpp
         displayscreenmanager.cpp
+        displaytransmitter.cpp
+        displaywinedetailscreen.cpp
         lowerstatus.cpp
         main.cpp
         messages.cpp
         models/displaycommunicationsmodels.cpp
-        models/winesentrystatemachine.cpp
         ping.cpp
+        processwinestatechange.cpp
         rightstatus.cpp
         splashscreen.cpp
         statusbar.cpp
+        winefailurepopup.cpp
+        wineglass.cpp
+        winepresentation.cpp
         winereading.cpp
         winereadingicons.cpp
-        ${LV_DEMOS_SOURCES}
+        winesentry_sans_16.c 
+        winesentry_serif_24.c
 
     INCLUDE_DIRS
         .
@@ -30,6 +33,7 @@ idf_component_register(
         bsp_extra
         esp_driver_jpeg  
         esp_driver_uart
+        mbedtls
         nvs_flash
         spiffs
         waveshare__esp32_p4_wifi6_touch_lcd_xc

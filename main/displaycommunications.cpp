@@ -22,7 +22,6 @@
 #include <driver/uart.h>
 #include <esp_log.h>
 #include <freertos/FreeRTOS.h>
-//#include <freertos/task.h>
 #include <cJSON.h>
 #include <string>
 #include <cstring>
@@ -31,9 +30,11 @@
 #include "DisplayCommunications.h"
 #include "messages.h"
 #include "models/displaycommunicationsmodels.h"
-#include "models/winesentrystatemachine.h"
+#include "winepresentation.h"
 #include "ping.h"
+#include "processwinestatechange.h"
 #include "statusbar.h"
+#include "winepresentation.h"
 #include "winereading.h"
 
 enum class DisplayMessageType
@@ -43,6 +44,7 @@ enum class DisplayMessageType
     LINE,
     PING, 
     WINE_READING,
+    WINE_PRESENTATION,
     UNKNOWN
 };
 
@@ -65,6 +67,9 @@ static DisplayMessageType GetDisplayMessageType(const char* type)
 
     if (strcmp(type, "WINE_READING") == 0)
         return DisplayMessageType::WINE_READING;
+
+    if (strcmp(type, "WINE_PRESENTATION") == 0)
+        return DisplayMessageType::WINE_PRESENTATION;
 
     return DisplayMessageType::UNKNOWN;
 }
@@ -122,14 +127,13 @@ esp_err_t InitializeDisplayCommunications()
     return err;
 }
 
-static WineSentryStateMachine wineStateMachine;
-
 void DisplayCommunicationsLoop(void* parameter)
 {
     uint8_t buffer[256];
     std::string receivedJson;
 
-    constexpr size_t MAX_JSON_SIZE = 16384;
+    constexpr size_t MAX_JSON_SIZE = 128 * 1024;
+
     bool discarding = false;
 
     while (true)
@@ -168,7 +172,7 @@ void DisplayCommunicationsLoop(void* parameter)
 
                                 if (message.FromJson(receivedJson.c_str()))
                                 {
-                                    wineStateMachine.ProcessStateChange(message);
+                                    ProcessStateChange(message);
                                 }
                                 else
                                 {
@@ -206,11 +210,22 @@ void DisplayCommunicationsLoop(void* parameter)
                                 break;
                                 }
 
+                            case DisplayMessageType::WINE_PRESENTATION:
+                                {
+                                WinePresentationHandle(receivedJson.c_str());
+                                break;
+                                }                                
+
                             default:
                                 {
                                 ESP_LOGW(TAG, "Unknown message type: %s", typeString ? typeString : "<missing>");
 
-                                ESP_LOGI(TAG, "Full UART JSON: %s", receivedJson.c_str());
+                                ESP_LOGW(
+    TAG,
+    "Unknown message type: %s (%u bytes)",
+    typeString ? typeString : "<missing>",
+    (unsigned)receivedJson.size()
+);
                                 break;
                                 }
                         }
