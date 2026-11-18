@@ -1,0 +1,285 @@
+// winepresentationdata.cpp 
+
+// This code assembles our data as needed and passes it to displaywinedetailscreen to be presented
+
+#include <bsp/esp-bsp.h>
+#include <esp_log.h>
+#include <mbedtls/base64.h>
+#include <cJSON.h>
+#include <cstdio>
+#include <string>
+#include <vector>
+#include <array>
+#include <cstring>
+
+#include "displaywinedetailscreen.h"
+#include "models/displaycommunicationsmodels.h"
+#include "winepresentationdata.h"
+
+static const char* TAG = "P4WineRx";
+static constexpr size_t MAX_LABEL_JPEG_BYTES = 64 * 1024;
+
+static bool IsCompleteJpeg(const std::vector<uint8_t>& image)
+{
+    return image.size() >= 4 &&
+           image[0] == 0xFF &&
+           image[1] == 0xD8 &&
+           image[image.size() - 2] == 0xFF &&
+           image[image.size() - 1] == 0xD9;
+}
+
+static std::string GetDisplayWineName(
+    const std::string& fullWineName,
+    const std::string& winery
+)
+{
+    if (winery.empty())
+    {
+        return fullWineName;
+    }
+
+    // Remove the winery prefix only when it is followed by a space.
+    if (fullWineName.size() > winery.size() &&
+        fullWineName.compare(0, winery.size(), winery) == 0 &&
+        fullWineName[winery.size()] == ' ')
+    {
+        return fullWineName.substr(winery.size() + 1);
+    }
+
+    return fullWineName;
+}
+
+// The S3 transports keyword arrays as JSON text, e.g.
+// ["cherry", "blackcurrant", "leather"]. Up to five
+// valid string descriptors are displayed on this screen.
+// Storage belongs to the caller and survives WineDetailsScreenShow().
+static void ParseKeywords(
+    const std::string& json,
+    std::array<std::string, 5>& output
+)
+{
+    if (json.empty() || json.size() > 2048)
+    {
+        return;
+    }
+
+    cJSON* root = cJSON_Parse(json.c_str());
+    if (!cJSON_IsArray(root))
+    {
+        cJSON_Delete(root);
+        ESP_LOGW(TAG, "Invalid keyword array: %.80s", json.c_str());
+        return;
+    }
+
+    int count = 0;
+    const cJSON* item = nullptr;
+    cJSON_ArrayForEach(item, root)
+    {
+        const char* text = cJSON_GetStringValue(item);
+        if (text == nullptr || text[0] == '\0')
+        {
+            continue;
+        }
+
+        // Strict keyword characters; no paths, whitespace or punctuation.
+        const size_t length = strlen(text);
+        if (length == 0 || length > 32)
+        {
+            continue;
+        }
+
+        bool valid = true;
+        for (const char* p = text; *p != '\0'; ++p)
+        {
+            if (!(*p >= 'a' && *p <= 'z') && *p != '_')
+            {
+                valid = false;
+                break;
+            }
+        }
+
+        if (!valid)
+        {
+            continue;
+        }
+
+        output[count++] = text;
+        if (count == static_cast<int>(output.size()))
+        {
+            break;
+        }
+    }
+
+    cJSON_Delete(root);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////////////////
+// Assemble the complete wine presentation from the S3 message.
+// No display operations occur here.
+//
+static WinePresentationData AssembleWinePresentationData(
+    const WinePresentationMessage& message)
+{
+    WinePresentationData wine;
+
+    // Wine identification
+    wine.producer = message.winery;
+    wine.wineName = GetDisplayWineName(
+        message.wineName,
+        message.winery
+    );
+
+    wine.vintage = message.vintage;
+    wine.region = message.region;
+    wine.cuvee = message.cuvee;
+
+    // Wine Labs information
+    wine.ratingScore = message.ratingScore;
+    wine.ratingReviewCount = message.ratingReviewCount;
+    wine.ratingSource = message.ratingSource;
+    wine.ratingLwin = message.ratingLwin;
+
+    wine.drinkingWindowStart = message.drinkingWindowStart;
+    wine.drinkingWindowEnd = message.drinkingWindowEnd;
+
+    // Retail value
+    wine.retailPrice = message.price;
+
+    if (message.price > 0.0)
+    {
+        char value[32] = {};
+
+        snprintf(
+            value,
+            sizeof(value),
+            "~$%.2f",
+            message.price
+        );
+
+        wine.reportedValue = value;
+    }
+
+    // Aromas and tasting characteristics
+    ParseKeywords(message.aromaKeywords, wine.aromas);
+    ParseKeywords(message.tasteKeywords, wine.palate);
+
+    return wine;
+}
+
+
+///////////////////////////////////////////////////////////////////////////////////////////
+// Receive the complete WINE_PRESENTATION message from the S3,
+// assemble the wine information, and pass it to the display.
+//
+void WinePresentationHandle(const char* json)
+{
+    if (json == nullptr)
+    {
+        return;
+    }
+
+    // Deserialize the incoming S3 message.
+    WinePresentationMessage message;
+
+    if (!message.FromJson(json))
+    {
+        ESP_LOGW(TAG, "Invalid WINE_PRESENTATION envelope");
+        return;
+    }
+
+    // Assemble our complete presentation object.
+    WinePresentationData wine =
+        AssembleWinePresentationData(message);
+
+    ESP_LOGI(TAG, "Wine: %s", wine.wineName.c_str());
+    ESP_LOGI(TAG, "Producer: %s", wine.producer.c_str());
+    ESP_LOGI(TAG, "Vintage: %s", wine.vintage.c_str());
+    ESP_LOGI(TAG, "Region: %s", wine.region.c_str());
+    ESP_LOGI(TAG, "Rating: %.1f", wine.ratingScore);
+    ESP_LOGI(TAG, "Reviews: %d", wine.ratingReviewCount);
+    ESP_LOGI(TAG, "Drinking window: %d - %d",
+             wine.drinkingWindowStart,
+             wine.drinkingWindowEnd);
+
+    // Decode the wine-label JPEG into our presentation object.
+    // The display will subsequently handle hardware JPEG decoding.
+    const std::string& encoded = message.labelJpegBase64;
+
+    if (!encoded.empty())
+    {
+        const size_t maxBase64Length =
+            4 * ((MAX_LABEL_JPEG_BYTES + 2) / 3);
+
+        if (encoded.size() <= maxBase64Length)
+        {
+            size_t decodedLength = 0;
+
+            const unsigned char* input =
+                reinterpret_cast<const unsigned char*>(
+                    encoded.data()
+                );
+
+            int result = mbedtls_base64_decode(
+                nullptr,
+                0,
+                &decodedLength,
+                input,
+                encoded.size()
+            );
+
+            if (result == MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL &&
+                decodedLength > 0 &&
+                decodedLength <= MAX_LABEL_JPEG_BYTES)
+            {
+                wine.labelJpeg.resize(decodedLength);
+
+                result = mbedtls_base64_decode(
+                    wine.labelJpeg.data(),
+                    wine.labelJpeg.size(),
+                    &decodedLength,
+                    input,
+                    encoded.size()
+                );
+
+                if (result == 0)
+                {
+                    wine.labelJpeg.resize(decodedLength);
+
+                    if (!IsCompleteJpeg(wine.labelJpeg))
+                    {
+                        ESP_LOGW(TAG, "Wine label JPEG invalid");
+                        wine.labelJpeg.clear();
+                    }
+                }
+                else
+                {
+                    ESP_LOGW(TAG, "Wine label Base64 decode failed");
+                    wine.labelJpeg.clear();
+                }
+            }
+        }
+        else
+        {
+            ESP_LOGW(TAG, "Wine label exceeds maximum size");
+        }
+    }
+
+    ESP_LOGI(TAG, "Wine presentation assembled: %s",
+             wine.wineName.c_str());
+
+    // Present the complete wine information.
+    if (bsp_display_lock(1000) == ESP_OK)
+    {
+        WineDetailsScreenShow(wine);
+
+        bsp_display_unlock();
+
+        ESP_LOGI(TAG, "Wine details displayed: %s",
+                 wine.wineName.c_str());
+    }
+    else
+    {
+        ESP_LOGE(TAG,
+                 "Unable to acquire LVGL lock for wine details");
+    }}

@@ -43,19 +43,15 @@ static size_t backgroundCapacity = 0;
 static lv_image_dsc_t backgroundDescriptor = {};
 static bool backgroundLoaded = false;
 
+////////////////////////////////////////////////////////////
+// methoids called but defined later
+void WineDetailsScreenPrepare(const WinePresentationData& wine);
+bool WineDetailsScreenPrepareLabel(const uint8_t* jpeg, size_t jpegSize);
+
 // New background is laid out at 800 x 800, not the former 720 x 720.
 static int S(int value)
 {
     return value * screenSize / 800;
-}
-
-static const lv_font_t* HeadingFont()
-{
-#if LV_FONT_MONTSERRAT_24
-    return &lv_font_montserrat_24;
-#else
-    return LV_FONT_DEFAULT;
-#endif
 }
 
 static lv_obj_t* AddText(
@@ -326,7 +322,7 @@ static bool LoadIcon(WineDetailIcon& destination, const char* keyword)
 static void AddIconRow(
     lv_obj_t* parent,
     int imageY,
-    const char* const tags[5],
+    const std::array<std::string, 5>& tags,
     int firstSlot)
 {
     // Horizontal center positions based on the number of icons.
@@ -345,16 +341,16 @@ static void AddIconRow(
 
     for (int i = 0; i < 5; i++)
     {
-        if (tags[i] == nullptr || tags[i][0] == '\0')
+        if (tags[i].empty())
         {
             continue;
         }
 
-        const IconDefinition* definition = FindIcon(tags[i]);
+        const IconDefinition* definition = FindIcon(tags[i].c_str());
 
         if (definition == nullptr)
         {
-            ESP_LOGW(TAG, "No icon mapping for keyword: %s", tags[i]);
+            ESP_LOGW(TAG, "No icon mapping for keyword: %s", tags[i].c_str());
             continue;
         }
 
@@ -371,7 +367,7 @@ static void AddIconRow(
     {
         int i = validIndices[column];
 
-        const IconDefinition* definition = FindIcon(tags[i]);
+        const IconDefinition* definition = FindIcon(tags[i].c_str());
         int centerX = COLUMN_CENTERS[iconCount - 1][column];
 
         WineDetailIcon& icon = iconSlots[firstSlot + i];
@@ -440,8 +436,24 @@ static void ReleaseLabel(DetailLabelImage& image)
     memset(&image.descriptor, 0, sizeof(image.descriptor));
 }
 
-// This function performs NO LVGL operations. Call it from the
-// UART receiver task, WITHOUT the LVGL lock.
+
+///////////////////////////////////////////////////////////////////////////////////////////
+// Prepare the wine's display resources outside the LVGL lock.
+//
+void WineDetailsScreenPrepare(const WinePresentationData& wine)
+{
+    if (!wine.labelJpeg.empty())
+    {
+        if (!WineDetailsScreenPrepareLabel(
+                wine.labelJpeg.data(),
+                wine.labelJpeg.size()))
+        {
+            ESP_LOGE(TAG, "Unable to prepare wine label");
+        }
+    }
+}
+
+// This function performs NO LVGL operations. 
 bool WineDetailsScreenPrepareLabel(const uint8_t* jpeg, size_t jpegSize)
 {
     ReleaseLabel(preparedLabel);
@@ -1035,7 +1047,7 @@ static void DetailsClicked(lv_event_t* event)
     WineDetailsScreenDismiss();
 }
 
-void WineDetailsScreenShow(const WineDetailsView& wine)
+void WineDetailsScreenShow(const WinePresentationData& wine)
 {
     ESP_LOGI(TAG, "WineDetailsScreenShow ENTERED");
 
@@ -1078,6 +1090,9 @@ void WineDetailsScreenShow(const WineDetailsView& wine)
         ClearIconBuffers();
     }
 
+    // Prepare all resources needed to display this wine.
+    WineDetailsScreenPrepare(wine);    
+
     // First child is the background. All labels below are foreground.
     // The JPEG already has the gold bezel, cat/wordmark, static labels,
     // image placeholder frame, rating/value frames, and section headings.
@@ -1103,75 +1118,51 @@ void WineDetailsScreenShow(const WineDetailsView& wine)
 
     // Dynamic data only: positions now correspond to 800x800 JPEG artwork.
     // Keep data below the static headings baked into the image.
+
+    // Dynamic data only: positions correspond to 800x800 JPEG artwork.
+    // All presentation information comes from WinePresentationData.
+
     AddText(detailsScreen, 377, 166, 355,
-            wine.producer, WHITE, false, true);
+            wine.producer.c_str(), WHITE, false, true);
 
     AddText(detailsScreen, 377, 222, 370,
-            wine.wineName, WHITE, false, true);
+            wine.wineName.c_str(), WHITE, false, true);
 
-    if (wine.cuvee != nullptr && wine.cuvee[0] != '\0')
+    if (!wine.cuvee.empty())
     {
         AddText(detailsScreen, 377, 282, 355,
-                wine.cuvee, WHITE, false, true);
+                wine.cuvee.c_str(), WHITE, false, true);
     }
 
-    AddText(detailsScreen, 625, 320, 230, wine.vintage, WHITE, false, true);
+    AddText(detailsScreen, 625, 320, 230,
+            wine.vintage.c_str(), WHITE, false, true);
 
-    // Values inside the existing gold cards. No new LVGL frames.
-    // Temporary layout experiment: show only 70w.jpg in the rating slot.
-    // Do not draw wine.rating text for this test.
+    // Retain the existing test artwork.
+    // Dynamic rating selection comes later.
     AddTestRatingImage(detailsScreen);
 
-    AddText(detailsScreen, 575, 415, 190, wine.reportedValue, WHITE, true, true);
+    // Retail value.
+    AddText(detailsScreen, 575, 415, 190,
+            wine.reportedValue.c_str(), WHITE, true, true);
 
-    // Five icons per row; adjust these Y coordinates to move each row.
-    // Raising by 18 pixels gives the captions clearance above the next heading.
+    // Aroma and palate icons.
     AddIconRow(detailsScreen, 466, wine.aromas, 0);
     AddIconRow(detailsScreen, 574, wine.palate, 5);
 
+    // Prepare the wine label from the presentation data.
+    if (!wine.labelJpeg.empty())
+    {
+        if (!WineDetailsScreenPrepareLabel(wine.labelJpeg.data(), wine.labelJpeg.size()))
+        {
+            ESP_LOGW(TAG, "Unable to prepare wine label");
+        }
+        else
+        {
+            WineDetailsScreenApplyLabel();
+        }
+    }
+
+
     lv_obj_set_hidden(detailsScreen, false);
     lv_obj_move_foreground(detailsScreen);
-}
-
-// Retained from the supplied source for compatibility. This helper is
-// not called by the working WinePresentationHandle path, which already
-// constructs WineDetailsView from the received S3 message.
-#include <cJSON.h>
-
-static void ShowIdentifiedWine(const cJSON* payload)
-{
-    if (!cJSON_IsObject(payload))
-    {
-        return;
-    }
-
-    auto GetString = [payload](const char* key) -> const char*
-    {
-        const cJSON* item =
-            cJSON_GetObjectItemCaseSensitive(payload, key);
-        const char* value = cJSON_GetStringValue(item);
-        return value != nullptr ? value : "";
-    };
-
-    std::string producer = GetString("winery");
-    std::string fullWineName = GetString("wineName");
-    std::string vintage = GetString("vintage");
-    std::string wineName = fullWineName;
-
-    if (!producer.empty() &&
-        fullWineName.size() > producer.size() &&
-        fullWineName.compare(0, producer.size(), producer) == 0 &&
-        fullWineName[producer.size()] == ' ')
-    {
-        wineName = fullWineName.substr(producer.size() + 1);
-    }
-
-    WineDetailsView wine{};
-    wine.producer = producer.c_str();
-    wine.wineName = wineName.c_str();
-    wine.vintage = vintage.c_str();
-    wine.cuvee = "";
-    wine.rating = "";
-    wine.reportedValue = "";
-    WineDetailsScreenShow(wine);
 }

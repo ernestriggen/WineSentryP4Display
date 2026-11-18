@@ -30,11 +30,10 @@
 #include "DisplayCommunications.h"
 #include "messages.h"
 #include "models/displaycommunicationsmodels.h"
-#include "winepresentation.h"
 #include "ping.h"
 #include "processwinestatechange.h"
 #include "statusbar.h"
-#include "winepresentation.h"
+#include "winepresentationdata.h"
 #include "winereading.h"
 
 enum class DisplayMessageType

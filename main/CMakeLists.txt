@@ -19,7 +19,7 @@ idf_component_register(
         statusbar.cpp
         winefailurepopup.cpp
         wineglass.cpp
-        winepresentation.cpp
+        winepresentationdata.cpp
         winereading.cpp
         winereadingicons.cpp
         winesentry_sans_16.c 
