@@ -98,9 +98,18 @@ public:
 
     double price = 0.0;
 
+    // Wine Labs information
+    double ratingScore = -1.0;
+    int ratingReviewCount = 0;
+
+    int drinkingWindowStart = 0;
+    int drinkingWindowEnd = 0;
+
+    std::string ratingLwin;
+    std::string ratingSource;
+
     std::string aromaKeywords;
     std::string tasteKeywords;
-
     std::string labelJpegBase64;
 
     WinePresentationMessage()

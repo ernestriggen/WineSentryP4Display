@@ -329,9 +329,19 @@ static void AddIconRow(
     const char* const tags[5],
     int firstSlot)
 {
-    // Five columns across the content area, leaving margins for the round bezel.
-//    static constexpr int COLUMN_CENTERS[5] = {160, 280, 400, 520, 640};
-    static constexpr int COLUMN_CENTERS[5] = {200, 300, 400, 500, 600};
+    // Horizontal center positions based on the number of icons.
+    static constexpr int COLUMN_CENTERS[5][5] =
+    {
+        {400,   0,   0,   0,   0},  // 1 icon
+        {350, 450,   0,   0,   0},  // 2 icons
+        {300, 400, 500,   0,   0},  // 3 icons
+        {250, 350, 450, 550,   0},  // 4 icons
+        {200, 300, 400, 500, 600}   // 5 icons
+    };
+
+    // First determine which keywords have valid icon definitions.
+    int validIndices[5] = {};
+    int iconCount = 0;
 
     for (int i = 0; i < 5; i++)
     {
@@ -341,28 +351,62 @@ static void AddIconRow(
         }
 
         const IconDefinition* definition = FindIcon(tags[i]);
+
         if (definition == nullptr)
         {
             ESP_LOGW(TAG, "No icon mapping for keyword: %s", tags[i]);
             continue;
         }
 
+        validIndices[iconCount++] = i;
+    }
+
+    if (iconCount == 0)
+    {
+        return;
+    }
+
+    // Display the valid icons using centered positions.
+    for (int column = 0; column < iconCount; column++)
+    {
+        int i = validIndices[column];
+
+        const IconDefinition* definition = FindIcon(tags[i]);
+        int centerX = COLUMN_CENTERS[iconCount - 1][column];
+
         WineDetailIcon& icon = iconSlots[firstSlot + i];
+
         if (LoadIcon(icon, definition->id))
         {
             lv_obj_t* image = lv_image_create(parent);
+
             lv_image_set_src(image, &icon.descriptor);
             lv_image_set_pivot(image, 0, 0);
-            lv_image_set_scale(image, ICON_DRAW_SIZE * 256 / ICON_FILE_SIZE * screenSize / 800);
-            lv_obj_set_pos(image,
-                           S(COLUMN_CENTERS[i] - ICON_DRAW_SIZE / 2),
-                           S(imageY));
+
+            lv_image_set_scale(
+                image,
+                ICON_DRAW_SIZE * 256 / ICON_FILE_SIZE * screenSize / 800
+            );
+
+            lv_obj_set_pos(
+                image,
+                S(centerX - ICON_DRAW_SIZE / 2),
+                S(imageY)
+            );
+
             lv_obj_set_clickable(image, false);
             lv_obj_set_scrollable(image, false);
         }
 
-        AddText(parent, COLUMN_CENTERS[i] - 55, imageY + ICON_DRAW_SIZE + 2,
-                110, definition->caption, WHITE, true);
+        AddText(
+            parent,
+            centerX - 55,
+            imageY + ICON_DRAW_SIZE + 2,
+            110,
+            definition->caption,
+            WHITE,
+            true
+        );
     }
 }
 
@@ -597,6 +641,202 @@ void WineDetailsScreenApplyLabel()
     lv_obj_set_clickable(labelImage, false);
     lv_obj_set_scrollable(labelImage, false);
     lv_obj_move_foreground(labelImage);
+}
+
+// ----------------------------------------------------------
+// Temporary rating artwork test: always display 70w.jpg.
+// The JPEG is decoded once and kept alive like the background.
+// Final rating selection/layout will replace this test later.
+// ----------------------------------------------------------
+static constexpr const char* TEST_RATING_JPEG_PATH = "/spiffs/70w.jpg";
+static constexpr int TEST_RATING_FILE_WIDTH = 240;
+static constexpr int TEST_RATING_FILE_HEIGHT = 136;
+static constexpr int TEST_RATING_X = 375;  // left is decrease
+static constexpr int TEST_RATING_Y = 315;  // up is descrease
+static constexpr int TEST_RATING_DRAW_WIDTH = 240;
+static constexpr int TEST_RATING_DRAW_HEIGHT = 136;
+static constexpr size_t MAX_TEST_RATING_JPEG_BYTES = 64 * 1024;
+
+static uint8_t* ratingPixels = nullptr;
+static lv_image_dsc_t ratingDescriptor = {};
+static bool ratingLoaded = false;
+
+static bool LoadTestRatingImage()
+{
+    if (ratingLoaded)
+    {
+        return true;
+    }
+
+    FILE* file = fopen(TEST_RATING_JPEG_PATH, "rb");
+    if (file == nullptr)
+    {
+        ESP_LOGW(TAG, "Cannot open rating JPEG: %s", TEST_RATING_JPEG_PATH);
+        return false;
+    }
+
+    if (fseek(file, 0, SEEK_END) != 0)
+    {
+        fclose(file);
+        return false;
+    }
+
+    const long fileSize = ftell(file);
+    rewind(file);
+    if (fileSize <= 0 ||
+        static_cast<size_t>(fileSize) > MAX_TEST_RATING_JPEG_BYTES)
+    {
+        ESP_LOGW(TAG, "Invalid rating JPEG size: %ld", fileSize);
+        fclose(file);
+        return false;
+    }
+
+    jpeg_decode_memory_alloc_cfg_t inputConfig = {};
+    inputConfig.buffer_direction = JPEG_DEC_ALLOC_INPUT_BUFFER;
+    size_t inputCapacity = 0;
+    uint8_t* input = static_cast<uint8_t*>(jpeg_alloc_decoder_mem(
+        static_cast<size_t>(fileSize), &inputConfig, &inputCapacity));
+    if (input == nullptr || inputCapacity < static_cast<size_t>(fileSize))
+    {
+        fclose(file);
+        free(input);
+        ESP_LOGE(TAG, "Rating JPEG input allocation failed");
+        return false;
+    }
+
+    const size_t bytesRead = fread(input, 1, static_cast<size_t>(fileSize), file);
+    fclose(file);
+    if (bytesRead != static_cast<size_t>(fileSize))
+    {
+        free(input);
+        return false;
+    }
+
+    jpeg_decode_picture_info_t info = {};
+    esp_err_t err = jpeg_decoder_get_info(
+        input, static_cast<uint32_t>(fileSize), &info);
+    if (err != ESP_OK ||
+        info.width != TEST_RATING_FILE_WIDTH ||
+        info.height != TEST_RATING_FILE_HEIGHT)
+    {
+        ESP_LOGE(TAG, "Rating JPEG must be %dx%d: %s",
+                 TEST_RATING_FILE_WIDTH, TEST_RATING_FILE_HEIGHT,
+                 TEST_RATING_JPEG_PATH);
+        free(input);
+        return false;
+    }
+
+    // The hardware JPEG decoder may pad the output height to 16 pixels.
+    const size_t paddedWidth = (static_cast<size_t>(info.width) + 15) & ~size_t(15);
+    const size_t paddedHeight = (static_cast<size_t>(info.height) + 15) & ~size_t(15);
+    const size_t allocationBytes = paddedWidth * paddedHeight * 2;
+    const size_t visibleBytes = static_cast<size_t>(info.width) * info.height * 2;
+
+    jpeg_decode_memory_alloc_cfg_t outputConfig = {};
+    outputConfig.buffer_direction = JPEG_DEC_ALLOC_OUTPUT_BUFFER;
+    size_t outputCapacity = 0;
+    uint8_t* pixels = static_cast<uint8_t*>(jpeg_alloc_decoder_mem(
+        allocationBytes, &outputConfig, &outputCapacity));
+    if (pixels == nullptr || outputCapacity < allocationBytes)
+    {
+        free(input);
+        free(pixels);
+        ESP_LOGE(TAG, "Rating JPEG output allocation failed");
+        return false;
+    }
+
+    jpeg_decode_engine_cfg_t engineConfig = {};
+    engineConfig.intr_priority = 0;
+    engineConfig.timeout_ms = 1000;
+    jpeg_decoder_handle_t decoder = nullptr;
+    err = jpeg_new_decoder_engine(&engineConfig, &decoder);
+    if (err != ESP_OK)
+    {
+        free(input);
+        free(pixels);
+        ESP_LOGE(TAG, "Rating JPEG engine unavailable: %s", esp_err_to_name(err));
+        return false;
+    }
+
+    jpeg_decode_cfg_t decodeConfig = {};
+    decodeConfig.output_format = JPEG_DECODE_OUT_FORMAT_RGB565;
+    decodeConfig.rgb_order = JPEG_DEC_RGB_ELEMENT_ORDER_BGR;
+    decodeConfig.conv_std = JPEG_YUV_RGB_CONV_STD_BT601;
+    uint32_t outputSize = 0;
+    err = jpeg_decoder_process(
+        decoder, &decodeConfig, input, static_cast<uint32_t>(fileSize),
+        pixels, static_cast<uint32_t>(outputCapacity), &outputSize);
+
+    jpeg_del_decoder_engine(decoder);
+    free(input);
+    if (err != ESP_OK || outputSize < visibleBytes)
+    {
+        ESP_LOGE(TAG, "Rating JPEG decode failed: %s", esp_err_to_name(err));
+        free(pixels);
+        return false;
+    }
+
+    // Compact rows if the decoder returned padded RGB565 scanlines.
+    size_t sourceStride = 0;
+    if (outputSize == paddedWidth * paddedHeight * 2 ||
+        outputSize == paddedWidth * static_cast<size_t>(info.height) * 2)
+    {
+        sourceStride = paddedWidth * 2;
+    }
+    else if (outputSize == static_cast<size_t>(info.width) * paddedHeight * 2 ||
+             outputSize == visibleBytes)
+    {
+        sourceStride = static_cast<size_t>(info.width) * 2;
+    }
+    else
+    {
+        ESP_LOGE(TAG, "Unexpected rating JPEG output size: %u", outputSize);
+        free(pixels);
+        return false;
+    }
+
+    const size_t visibleStride = static_cast<size_t>(info.width) * 2;
+    if (sourceStride != visibleStride)
+    {
+        for (size_t row = 1; row < info.height; ++row)
+        {
+            memmove(pixels + row * visibleStride,
+                    pixels + row * sourceStride, visibleStride);
+        }
+    }
+
+    ratingPixels = pixels;
+    ratingDescriptor.header.magic = LV_IMAGE_HEADER_MAGIC;
+    ratingDescriptor.header.cf = LV_COLOR_FORMAT_RGB565;
+    ratingDescriptor.header.w = info.width;
+    ratingDescriptor.header.h = info.height;
+    ratingDescriptor.data_size = visibleBytes;
+    ratingDescriptor.data = ratingPixels;
+    ratingLoaded = true;
+    ESP_LOGI(TAG, "Test rating JPEG decoded: %s (%ux%u)",
+             TEST_RATING_JPEG_PATH,
+             static_cast<unsigned>(info.width),
+             static_cast<unsigned>(info.height));
+    return true;
+}
+
+static void AddTestRatingImage(lv_obj_t* parent)
+{
+    if (!LoadTestRatingImage())
+    {
+        return;
+    }
+
+    lv_obj_t* image = lv_image_create(parent);
+    lv_image_set_src(image, &ratingDescriptor);
+    lv_image_set_pivot(image, 0, 0);
+    // The supplied art is 240x136; render at 120x68 in the existing rating box.
+    lv_image_set_scale(image,
+                       TEST_RATING_DRAW_WIDTH * 256 /
+                       TEST_RATING_FILE_WIDTH * screenSize / 800);
+    lv_obj_set_pos(image, S(TEST_RATING_X), S(TEST_RATING_Y));
+    lv_obj_set_clickable(image, false);
+    lv_obj_set_scrollable(image, false);
 }
 
 static bool LoadBackgroundImage()
@@ -875,15 +1115,14 @@ void WineDetailsScreenShow(const WineDetailsView& wine)
                 wine.cuvee, WHITE, false, true);
     }
 
-    AddText(detailsScreen, 463, 318, 230,
-            wine.vintage, WHITE, false, true);
+    AddText(detailsScreen, 625, 320, 230, wine.vintage, WHITE, false, true);
 
     // Values inside the existing gold cards. No new LVGL frames.
-    AddText(detailsScreen, 374, 387, 143,
-            wine.rating, WHITE, true, true);
+    // Temporary layout experiment: show only 70w.jpg in the rating slot.
+    // Do not draw wine.rating text for this test.
+    AddTestRatingImage(detailsScreen);
 
-    AddText(detailsScreen, 536, 387, 190,
-            wine.reportedValue, WHITE, true, true);
+    AddText(detailsScreen, 575, 415, 190, wine.reportedValue, WHITE, true, true);
 
     // Five icons per row; adjust these Y coordinates to move each row.
     // Raising by 18 pixels gives the captions clearance above the next heading.

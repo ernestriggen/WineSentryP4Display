@@ -271,6 +271,45 @@ cJSON* WinePresentationMessage::PayloadToJson() const
         return nullptr;
     }
 
+    // Wine Labs information is optional.
+    // A missing rating must never be represented as zero.
+    if (ratingScore >= 0.0)
+    {
+        valid =
+            cJSON_AddNumberToObject(payload, "ratingScore", ratingScore) != nullptr &&
+            cJSON_AddNumberToObject(payload, "ratingReviewCount", ratingReviewCount) != nullptr;
+    }
+
+    if (valid && drinkingWindowStart > 0)
+    {
+        valid = cJSON_AddNumberToObject(
+            payload, "drinkingWindowStart", drinkingWindowStart) != nullptr;
+    }
+
+    if (valid && drinkingWindowEnd > 0)
+    {
+        valid = cJSON_AddNumberToObject(
+            payload, "drinkingWindowEnd", drinkingWindowEnd) != nullptr;
+    }
+
+    if (valid && !ratingLwin.empty())
+    {
+        valid = cJSON_AddStringToObject(
+            payload, "ratingLwin", ratingLwin.c_str()) != nullptr;
+    }
+
+    if (valid && !ratingSource.empty())
+    {
+        valid = cJSON_AddStringToObject(
+            payload, "ratingSource", ratingSource.c_str()) != nullptr;
+    }
+
+    if (!valid)
+    {
+        cJSON_Delete(payload);
+        return nullptr;
+    }
+
     return payload;
 }
 
@@ -305,6 +344,41 @@ bool WinePresentationMessage::PayloadFromJson(const cJSON* payload)
     price = cJSON_IsNumber(priceField)
         ? priceField->valuedouble
         : 0.0;
+
+    // Wine Labs rating and review count.
+    // Missing ratings remain -1 rather than zero.
+    const cJSON* scoreField =
+        cJSON_GetObjectItemCaseSensitive(payload, "ratingScore");
+
+    ratingScore = cJSON_IsNumber(scoreField)
+        ? scoreField->valuedouble
+        : -1.0;
+
+    const cJSON* reviewCountField =
+        cJSON_GetObjectItemCaseSensitive(payload, "ratingReviewCount");
+
+    ratingReviewCount = cJSON_IsNumber(reviewCountField)
+        ? reviewCountField->valueint
+        : 0;
+
+    // Recommended drinking window.
+    const cJSON* startField =
+        cJSON_GetObjectItemCaseSensitive(payload, "drinkingWindowStart");
+
+    drinkingWindowStart = cJSON_IsNumber(startField)
+        ? startField->valueint
+        : 0;
+
+    const cJSON* endField =
+        cJSON_GetObjectItemCaseSensitive(payload, "drinkingWindowEnd");
+
+    drinkingWindowEnd = cJSON_IsNumber(endField)
+        ? endField->valueint
+        : 0;
+
+    // Wine Labs identifiers and attribution.
+    ratingLwin = readString("ratingLwin");
+    ratingSource = readString("ratingSource");
 
     return !wineName.empty();
 }    

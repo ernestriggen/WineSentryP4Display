@@ -126,6 +126,22 @@ void WinePresentationHandle(const char* json)
         return;
     }
 
+    ESP_LOGI(TAG, "Wine Labs score: %.1f",
+         message.ratingScore);
+
+ESP_LOGI(TAG, "Wine Labs reviews: %d",
+         message.ratingReviewCount);
+
+ESP_LOGI(TAG, "Wine Labs drinking window: %d - %d",
+         message.drinkingWindowStart,
+         message.drinkingWindowEnd);
+
+ESP_LOGI(TAG, "Wine Labs LWIN: %s",
+         message.ratingLwin.c_str());
+
+ESP_LOGI(TAG, "Wine Labs source: %s",
+         message.ratingSource.c_str());
+
     ESP_LOGI(TAG, "Wine: %s", message.wineName.c_str());
     ESP_LOGI(TAG, "Winery: %s", message.winery.c_str());
     ESP_LOGI(TAG, "Vintage: %s", message.vintage.c_str());
@@ -142,7 +158,7 @@ void WinePresentationHandle(const char* json)
     char retailValue[32] = {};
     if (message.price > 0.0)
     {
-        snprintf(retailValue, sizeof(retailValue), "$%.2f", message.price);
+        snprintf(retailValue, sizeof(retailValue), "~$%.2f", message.price);
     }
 
     // These strings stay alive until WineDetailsScreenShow has copied them
