@@ -16,6 +16,7 @@
 #include "statusbar.h"
 #include "winereading.h"
 #include "winereadingicons.h"
+#include "displaywinedetailscreen.h"
 
 static const char* TAG = "WINE_READING";
 
@@ -59,6 +60,7 @@ struct WineReadingData
     int tempOutOfRange = -1;
     int humidityOutOfRange = -1;
 
+    int readingYear = 0;
     int readingMonth = 0;
     int readingDay = 0;
     int readingHour = 0;
@@ -766,10 +768,16 @@ else
     );
 
     parsed.hasReadingDateTime =
+        GetInteger(reading, "ReadingYear", 1900, 2200, parsed.readingYear) &&
         GetInteger(reading, "ReadingMonth", 1, 12, parsed.readingMonth) &&
         GetInteger(reading, "ReadingDay", 1, 31, parsed.readingDay) &&
         GetInteger(reading, "ReadingHour", 0, 23, parsed.readingHour) &&
         GetInteger(reading, "ReadingMinute", 0, 59, parsed.readingMinute);
+
+if (parsed.hasReadingDateTime)
+{
+    WineDetailsScreenSetCurrentYear(parsed.readingYear);
+}        
 
     // Overall normal status is sufficient to mark both normal
     // when individual flags are unavailable.

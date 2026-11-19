@@ -3,16 +3,18 @@
 // Uses the exact screen entry points and tap-to-dismiss UART callback from
 // the existing implementation. Call WineDetailsScreenShow with the LVGL lock held.
 
+#include <atomic>
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
-#include <cstdint>
 #include <string>
 
 #include <driver/jpeg_decode.h>
 #include <esp_err.h>
 #include <esp_log.h>
+#include <esp_random.h>
+#include <lvgl_private.h>
 #include <lvgl.h>
+#include <time.h>
 
 #include "displaytransmitter.h"
 #include "displaywinedetailscreen.h"
@@ -30,11 +32,9 @@ static constexpr uint32_t GOLD = 0xD2A75D;
 static constexpr uint32_t BACKGROUND = 0x090909;
 static constexpr int BACKGROUND_WIDTH = 800;
 static constexpr int BACKGROUND_HEIGHT = 800;
-static constexpr size_t BACKGROUND_RGB565_BYTES =
-    BACKGROUND_WIDTH * BACKGROUND_HEIGHT * 2;
+static constexpr size_t BACKGROUND_RGB565_BYTES =  BACKGROUND_WIDTH * BACKGROUND_HEIGHT * 2;
 static constexpr size_t MAX_BACKGROUND_JPEG_BYTES = 512 * 1024;
-static constexpr const char* BACKGROUND_JPEG_PATH =
-    "/spiffs/winedetailbackground.jpg";
+static constexpr const char* BACKGROUND_JPEG_PATH = "/spiffs/winedetailbackground.jpg";
 
 // Keep the decoded pixels and LVGL descriptor alive between presentations.
 // lv_obj_clean(detailsScreen) deletes children but NOT this image data.
@@ -42,11 +42,14 @@ static uint8_t* backgroundPixels = nullptr;
 static size_t backgroundCapacity = 0;
 static lv_image_dsc_t backgroundDescriptor = {};
 static bool backgroundLoaded = false;
+static std::atomic<int> g_wineReadingYear{2026};
 
 ////////////////////////////////////////////////////////////
 // methoids called but defined later
 void WineDetailsScreenPrepare(const WinePresentationData& wine);
 bool WineDetailsScreenPrepareLabel(const uint8_t* jpeg, size_t jpegSize);
+static bool LoadWineLabImage();
+static void AddWineLabImage(lv_obj_t* parent);
 
 // New background is laid out at 800 x 800, not the former 720 x 720.
 static int S(int value)
@@ -173,18 +176,105 @@ static constexpr IconDefinition ICON_DEFINITIONS[] =
     {"long_finish", "Long Finish"},
 };
 
-static const IconDefinition* FindIcon(const char* keyword)
+// Create a lookup key ONLY for choosing an existing P4 icon.
+// The original aroma/palate phrase is never modified for display.
+static std::string IconLookupKey(const char* text)
 {
-    if (keyword == nullptr)
+    std::string key;
+    bool separator = false;
+
+    if (text == nullptr)
+    {
+        return key;
+    }
+
+    for (const unsigned char* p =
+             reinterpret_cast<const unsigned char*>(text);
+         *p != 0; ++p)
+    {
+        unsigned char c = *p;
+
+        if (c >= 'A' && c <= 'Z')
+        {
+            c = static_cast<unsigned char>(c - 'A' + 'a');
+        }
+
+        if ((c >= 'a' && c <= 'z') ||
+            (c >= '0' && c <= '9'))
+        {
+            if (separator && !key.empty())
+            {
+                key.push_back(' ');
+            }
+
+            key.push_back(static_cast<char>(c));
+            separator = false;
+        }
+        else
+        {
+            separator = true;
+        }
+    }
+
+    return key;
+}
+
+// Deliberately small, explicit semantic aliases.
+// An unmatched phrase is still displayed, simply without artwork.
+struct IconAlias
+{
+    const char* phrase;
+    const char* iconId;
+};
+
+static constexpr IconAlias ICON_ALIASES[] =
+{
+    {"blackberries", "blackberry"},
+    {"black cherries", "cherry"},
+    {"dark cherries", "cherry"},
+    {"red cherries", "cherry"},
+    {"cassis", "blackcurrant"},
+    {"toasted oak", "oak"},
+    {"black fruit", "dark_fruit"},
+    {"fine tannin structure", "tannins"},
+    {"velvety texture", "smooth"},
+    {"suave texture", "smooth"},
+    {"gunflint", "mineral"},
+    {"wet stones", "mineral"},
+};
+
+static const IconDefinition* FindIcon(const char* phrase)
+{
+    const std::string lookup = IconLookupKey(phrase);
+
+    if (lookup.empty())
     {
         return nullptr;
     }
 
+    // Exact match to an existing SPIFFS icon ID.
     for (const IconDefinition& definition : ICON_DEFINITIONS)
     {
-        if (strcmp(keyword, definition.id) == 0)
+        if (lookup == IconLookupKey(definition.id))
         {
             return &definition;
+        }
+    }
+
+    // Phrases whose meaning is well represented by an existing icon.
+    for (const IconAlias& alias : ICON_ALIASES)
+    {
+        if (lookup != alias.phrase)
+        {
+            continue;
+        }
+
+        for (const IconDefinition& definition : ICON_DEFINITIONS)
+        {
+            if (strcmp(alias.iconId, definition.id) == 0)
+            {
+                return &definition;
+            }
         }
     }
 
@@ -319,87 +409,86 @@ static bool LoadIcon(WineDetailIcon& destination, const char* keyword)
     return true;
 }
 
+// Draw up to five ORIGINAL descriptors, in the order OpenAI returned them.
+// A missing icon is not a reason to remove the descriptor.
 static void AddIconRow(
     lv_obj_t* parent,
     int imageY,
     const std::array<std::string, 5>& tags,
     int firstSlot)
 {
-    // Horizontal center positions based on the number of icons.
     static constexpr int COLUMN_CENTERS[5][5] =
     {
-        {400,   0,   0,   0,   0},  // 1 icon
-        {350, 450,   0,   0,   0},  // 2 icons
-        {300, 400, 500,   0,   0},  // 3 icons
-        {250, 350, 450, 550,   0},  // 4 icons
-        {200, 300, 400, 500, 600}   // 5 icons
+        {400,   0,   0,   0,   0},
+        {350, 450,   0,   0,   0},
+        {300, 400, 500,   0,   0},
+        {250, 350, 450, 550,   0},
+        {200, 300, 400, 500, 600}
     };
 
-    // First determine which keywords have valid icon definitions.
-    int validIndices[5] = {};
-    int iconCount = 0;
+    int indices[5] = {};
+    int count = 0;
 
-    for (int i = 0; i < 5; i++)
+    // Count every supplied descriptor, not just those with icon files.
+    for (int i = 0; i < 5; ++i)
     {
-        if (tags[i].empty())
+        if (!tags[i].empty())
         {
-            continue;
+            indices[count++] = i;
         }
-
-        const IconDefinition* definition = FindIcon(tags[i].c_str());
-
-        if (definition == nullptr)
-        {
-            ESP_LOGW(TAG, "No icon mapping for keyword: %s", tags[i].c_str());
-            continue;
-        }
-
-        validIndices[iconCount++] = i;
     }
 
-    if (iconCount == 0)
+    if (count == 0)
     {
         return;
     }
 
-    // Display the valid icons using centered positions.
-    for (int column = 0; column < iconCount; column++)
+    for (int column = 0; column < count; ++column)
     {
-        int i = validIndices[column];
+        const int i = indices[column];
+        const int centerX = COLUMN_CENTERS[count - 1][column];
+        const std::string& descriptor = tags[i];
+        const IconDefinition* definition = FindIcon(descriptor.c_str());
 
-        const IconDefinition* definition = FindIcon(tags[i].c_str());
-        int centerX = COLUMN_CENTERS[iconCount - 1][column];
-
-        WineDetailIcon& icon = iconSlots[firstSlot + i];
-
-        if (LoadIcon(icon, definition->id))
+        if (definition != nullptr)
         {
-            lv_obj_t* image = lv_image_create(parent);
+            // Icon path is derived ONLY from our trusted icon dictionary.
+            WineDetailIcon& icon = iconSlots[firstSlot + i];
 
-            lv_image_set_src(image, &icon.descriptor);
-            lv_image_set_pivot(image, 0, 0);
-
-            lv_image_set_scale(
-                image,
-                ICON_DRAW_SIZE * 256 / ICON_FILE_SIZE * screenSize / 800
-            );
-
-            lv_obj_set_pos(
-                image,
-                S(centerX - ICON_DRAW_SIZE / 2),
-                S(imageY)
-            );
-
-            lv_obj_set_clickable(image, false);
-            lv_obj_set_scrollable(image, false);
+            if (LoadIcon(icon, definition->id))
+            {
+                lv_obj_t* image = lv_image_create(parent);
+                lv_image_set_src(image, &icon.descriptor);
+                lv_image_set_pivot(image, 0, 0);
+                lv_image_set_scale(
+                    image,
+                    ICON_DRAW_SIZE * 256 / ICON_FILE_SIZE * screenSize / 800
+                );
+                lv_obj_set_pos(
+                    image,
+                    S(centerX - ICON_DRAW_SIZE / 2),
+                    S(imageY)
+                );
+                lv_obj_set_clickable(image, false);
+                lv_obj_set_scrollable(image, false);
+            }
+            else
+            {
+                ESP_LOGW(TAG, "Icon unavailable for: %s", descriptor.c_str());
+            }
+        }
+        else
+        {
+            ESP_LOGI(TAG, "Text-only wine descriptor: %s", descriptor.c_str());
         }
 
+        // Always display the ORIGINAL phrase, even if no icon exists.
         AddText(
             parent,
             centerX - 55,
             imageY + ICON_DRAW_SIZE + 2,
             110,
-            definition->caption,
+            descriptor.c_str(),
             WHITE,
             true
         );
@@ -673,14 +762,36 @@ static uint8_t* ratingPixels = nullptr;
 static lv_image_dsc_t ratingDescriptor = {};
 static bool ratingLoaded = false;
 
-static bool LoadTestRatingImage()
+static bool LoadRatingImage(double ratingScore)
 {
-    if (ratingLoaded)
+    if (ratingScore < 0.0)
     {
-        return true;
+        return false;
     }
 
-    FILE* file = fopen(TEST_RATING_JPEG_PATH, "rb");
+    // Previous LVGL image objects have already been deleted
+    // by WineDetailsScreenShow().
+    free(ratingPixels);
+    ratingPixels = nullptr;
+    ratingDescriptor = {};
+
+    // Round to the nearest 10.
+    int ratingBand = (static_cast<int>(ratingScore + 5.0) / 10) * 10;
+
+    // Available artwork ranges from 60 through 100.
+    if (ratingBand < 60) ratingBand = 60;
+    if (ratingBand > 100) ratingBand = 100;
+
+    // Randomly choose m or w for each presentation.
+    char suffix = (esp_random() & 1U) ? 'w' : 'm';
+
+    char ratingPath[48] = {};
+
+    snprintf(ratingPath, sizeof(ratingPath), "/spiffs/%d%c.jpg", ratingBand, suffix);
+
+    ESP_LOGI(TAG, "Loading rating image: %s", ratingPath);
+
+    FILE* file = fopen(ratingPath, "rb");
     if (file == nullptr)
     {
         ESP_LOGW(TAG, "Cannot open rating JPEG: %s", TEST_RATING_JPEG_PATH);
@@ -832,9 +943,9 @@ static bool LoadTestRatingImage()
     return true;
 }
 
-static void AddTestRatingImage(lv_obj_t* parent)
+static void AddRatingImage(lv_obj_t* parent, double ratingScore)
 {
-    if (!LoadTestRatingImage())
+    if (!LoadRatingImage(ratingScore))
     {
         return;
     }
@@ -1082,10 +1193,14 @@ void WineDetailsScreenShow(const WinePresentationData& wine)
             nullptr
         );
     }
-    else
+  else
     {
         lv_obj_clean(detailsScreen);
         wineLabelObject = nullptr;
+
+        // Invalidate cached image data before freeing its pixels.
+        lv_image_cache_drop(&displayedLabel.descriptor);
+
         ReleaseLabel(displayedLabel);
         ClearIconBuffers();
     }
@@ -1130,20 +1245,134 @@ void WineDetailsScreenShow(const WinePresentationData& wine)
 
     if (!wine.cuvee.empty())
     {
-        AddText(detailsScreen, 377, 282, 355,
-                wine.cuvee.c_str(), WHITE, false, true);
+        AddText(detailsScreen, 377, 282, 355, wine.cuvee.c_str(), WHITE, false, true);
     }
-
-    AddText(detailsScreen, 625, 320, 230,
-            wine.vintage.c_str(), WHITE, false, true);
 
     // Retain the existing test artwork.
     // Dynamic rating selection comes later.
-    AddTestRatingImage(detailsScreen);
+    AddRatingImage(detailsScreen, wine.ratingScore);
+    AddWineLabImage(detailsScreen);
+    // Display the actual Wine Labs rating over the rating artwork.
+    if (wine.ratingScore >= 0.0)
+    {
+        char ratingText[16] = {};
+
+        snprintf(ratingText, sizeof(ratingText), "%.0f (%d)", wine.ratingScore, wine.ratingReviewCount);
+        AddText(detailsScreen, TEST_RATING_X + 20, TEST_RATING_Y + 20, 80, ratingText, GOLD, false, true);
+    }
 
     // Retail value.
-    AddText(detailsScreen, 575, 415, 190,
-            wine.reportedValue.c_str(), WHITE, true, true);
+    AddText(detailsScreen, 650, 350, 230, wine.reportedValue.c_str(), WHITE, false, false);
+    AddText(detailsScreen, 650, 330, 230, wine.vintage.c_str(), WHITE, false, false);
+
+
+
+if (wine.drinkingWindowStart > 0 &&
+    wine.drinkingWindowEnd > wine.drinkingWindowStart)
+{
+    const int startYear = wine.drinkingWindowStart;
+    const int endYear = wine.drinkingWindowEnd;
+
+    int currentYear = g_wineReadingYear.load();
+
+    // Preserve the original timeline behavior when the
+    // clock is valid. Otherwise begin at the drinking start.
+    const int lowerYear = (currentYear < startYear)
+            ? currentYear
+            : startYear;
+
+    const std::string lowerText = std::to_string(lowerYear);
+    const std::string upperText = std::to_string(endYear);
+
+    //
+    // ALWAYS draw the drinking-window years.
+    //
+
+    AddText(detailsScreen, 77, 200, 60,
+            upperText.c_str(), GOLD, false, true);
+
+    AddText(detailsScreen, 77, 392, 60,
+            lowerText.c_str(), GOLD, false, true);
+
+    //
+    // The progress bar requires a valid current year.
+    //
+
+        constexpr int BAR_X = 102;
+        constexpr int BAR_TOP = 234;
+        constexpr int BAR_BOTTOM = 385;
+        constexpr int BAR_WIDTH = 10;
+
+        const int barHeight = BAR_BOTTOM - BAR_TOP;
+        const int totalYears = endYear - lowerYear;
+
+        const int transitionYear =
+            (startYear > currentYear) ? startYear : currentYear;
+
+        int redYears = transitionYear - lowerYear;
+
+        if (redYears < 0)
+        {
+            redYears = 0;
+        }
+
+        if (redYears > totalYears)
+        {
+            redYears = totalYears;
+        }
+
+        const int redHeight =
+            (redYears * barHeight) / totalYears;
+
+        const int greenHeight = barHeight - redHeight;
+
+        constexpr uint32_t GREEN = 0x79B98F;
+        constexpr uint32_t SOFT_RED = 0xCB827E;
+        constexpr uint32_t DARK_RED = 0x903F49;
+
+        auto DrawSegment = [&](int y, int height, uint32_t color)
+        {
+            if (height <= 0)
+            {
+                return;
+            }
+
+            lv_obj_t* segment = lv_obj_create(detailsScreen);
+
+            lv_obj_set_pos(segment, S(BAR_X), S(y));
+            lv_obj_set_size(segment, S(BAR_WIDTH), S(height));
+
+            lv_obj_set_style_bg_color(
+                segment, lv_color_hex(color), 0);
+
+            lv_obj_set_style_bg_opa(segment, LV_OPA_COVER, 0);
+            lv_obj_set_style_border_width(segment, 0, 0);
+            lv_obj_set_style_radius(segment, 0, 0);
+            lv_obj_set_style_pad_all(segment, 0, 0);
+
+            lv_obj_set_clickable(segment, false);
+            lv_obj_set_scrollable(segment, false);
+        };
+
+        // Green occupies the upper portion.
+        DrawSegment(BAR_TOP, greenHeight, GREEN);
+
+        // Red occupies the lower portion.
+        if (redHeight > 0)
+        {
+            const uint32_t redColor =
+                (startYear > currentYear) ? SOFT_RED : DARK_RED;
+
+            DrawSegment(
+                BAR_TOP + greenHeight,
+                redHeight,
+                redColor
+            );
+        }
+}
+
+    lv_obj_t* credit = AddText(detailsScreen, 238, 720, 320, "Critic ratings courtesy of Wine Labs", WHITE, true, false);
+    lv_obj_set_style_text_font(credit, &lv_font_montserrat_12, 0);
 
     // Aroma and palate icons.
     AddIconRow(detailsScreen, 466, wine.aromas, 0);
@@ -1165,4 +1394,253 @@ void WineDetailsScreenShow(const WinePresentationData& wine)
 
     lv_obj_set_hidden(detailsScreen, false);
     lv_obj_move_foreground(detailsScreen);
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////
+// Wine Labs information panel.
+//
+static constexpr const char* WINELAB_IMAGE_PATH = "/spiffs/winelabdata.jpg";
+static constexpr int WINELAB_X = 620;
+static constexpr int WINELAB_Y = 315;
+static constexpr int WINELAB_WIDTH = 120;
+static constexpr int WINELAB_HEIGHT = 136;
+
+static uint8_t* wineLabPixels = nullptr;
+static lv_image_dsc_t wineLabDescriptor = {};
+static bool wineLabLoaded = false;
+
+
+///////////////////////////////////////////////////////////////////////////////////////////
+// Load and decode the Wine Labs JPEG once.
+//
+static bool LoadWineLabImage()
+{
+    if (wineLabLoaded)
+    {
+        return true;
+    }
+
+    FILE* file = fopen(WINELAB_IMAGE_PATH, "rb");
+
+    if (file == nullptr)
+    {
+        ESP_LOGE(TAG, "Cannot open Wine Labs image");
+        return false;
+    }
+
+    fseek(file, 0, SEEK_END);
+    long fileSize = ftell(file);
+    rewind(file);
+
+    if (fileSize <= 0 || fileSize > 65536)
+    {
+        fclose(file);
+        return false;
+    }
+
+    jpeg_decode_memory_alloc_cfg_t inputConfig = {};
+    inputConfig.buffer_direction = JPEG_DEC_ALLOC_INPUT_BUFFER;
+
+    size_t inputCapacity = 0;
+
+    uint8_t* input = static_cast<uint8_t*>(
+        jpeg_alloc_decoder_mem(
+            fileSize,
+            &inputConfig,
+            &inputCapacity
+        )
+    );
+
+    if (input == nullptr || inputCapacity < static_cast<size_t>(fileSize))
+    {
+        fclose(file);
+        free(input);
+        return false;
+    }
+
+    size_t bytesRead = fread(input, 1, fileSize, file);
+    fclose(file);
+
+    if (bytesRead != static_cast<size_t>(fileSize))
+    {
+        free(input);
+        return false;
+    }
+
+    jpeg_decode_picture_info_t info = {};
+
+    esp_err_t err = jpeg_decoder_get_info(
+        input,
+        static_cast<uint32_t>(fileSize),
+        &info
+    );
+
+    if (err != ESP_OK ||
+        info.width != WINELAB_WIDTH ||
+        info.height != WINELAB_HEIGHT)
+    {
+        ESP_LOGE(TAG, "Wine Labs JPEG must be 120x136");
+        free(input);
+        return false;
+    }
+
+    // Account for JPEG decoder padding.
+    const size_t paddedWidth =
+        (static_cast<size_t>(info.width) + 15) & ~size_t(15);
+
+    const size_t paddedHeight =
+        (static_cast<size_t>(info.height) + 15) & ~size_t(15);
+
+    const size_t outputBytes = paddedWidth * paddedHeight * 2;
+    const size_t visibleBytes =
+        static_cast<size_t>(info.width) * info.height * 2;
+
+    jpeg_decode_memory_alloc_cfg_t outputConfig = {};
+    outputConfig.buffer_direction = JPEG_DEC_ALLOC_OUTPUT_BUFFER;
+
+    size_t outputCapacity = 0;
+
+    uint8_t* pixels = static_cast<uint8_t*>(
+        jpeg_alloc_decoder_mem(
+            outputBytes,
+            &outputConfig,
+            &outputCapacity
+        )
+    );
+
+    if (pixels == nullptr || outputCapacity < outputBytes)
+    {
+        free(input);
+        free(pixels);
+        return false;
+    }
+
+    jpeg_decode_engine_cfg_t engineConfig = {};
+    engineConfig.intr_priority = 0;
+    engineConfig.timeout_ms = 1000;
+
+    jpeg_decoder_handle_t decoder = nullptr;
+
+    err = jpeg_new_decoder_engine(&engineConfig, &decoder);
+
+    if (err != ESP_OK)
+    {
+        free(input);
+        free(pixels);
+        return false;
+    }
+
+    jpeg_decode_cfg_t decodeConfig = {};
+    decodeConfig.output_format = JPEG_DECODE_OUT_FORMAT_RGB565;
+    decodeConfig.rgb_order = JPEG_DEC_RGB_ELEMENT_ORDER_BGR;
+    decodeConfig.conv_std = JPEG_YUV_RGB_CONV_STD_BT601;
+
+    uint32_t decodedBytes = 0;
+
+    err = jpeg_decoder_process(
+        decoder,
+        &decodeConfig,
+        input,
+        static_cast<uint32_t>(fileSize),
+        pixels,
+        static_cast<uint32_t>(outputCapacity),
+        &decodedBytes
+    );
+
+    jpeg_del_decoder_engine(decoder);
+    free(input);
+
+    if (err != ESP_OK || decodedBytes < visibleBytes)
+    {
+        free(pixels);
+        return false;
+    }
+
+    // Compact padded scanlines when necessary.
+    size_t sourceStride = 0;
+
+    if (decodedBytes == paddedWidth * paddedHeight * 2 ||
+        decodedBytes == paddedWidth * static_cast<size_t>(info.height) * 2)
+    {
+        sourceStride = paddedWidth * 2;
+    }
+    else if (decodedBytes == static_cast<size_t>(info.width) * paddedHeight * 2 ||
+             decodedBytes == visibleBytes)
+    {
+        sourceStride = static_cast<size_t>(info.width) * 2;
+    }
+    else
+    {
+        free(pixels);
+        return false;
+    }
+
+    const size_t visibleStride = static_cast<size_t>(info.width) * 2;
+
+    if (sourceStride != visibleStride)
+    {
+        for (size_t row = 1; row < info.height; ++row)
+        {
+            memmove(
+                pixels + row * visibleStride,
+                pixels + row * sourceStride,
+                visibleStride
+            );
+        }
+    }
+
+    wineLabPixels = pixels;
+
+    wineLabDescriptor.header.magic = LV_IMAGE_HEADER_MAGIC;
+    wineLabDescriptor.header.cf = LV_COLOR_FORMAT_RGB565;
+    wineLabDescriptor.header.w = info.width;
+    wineLabDescriptor.header.h = info.height;
+    wineLabDescriptor.data_size = visibleBytes;
+    wineLabDescriptor.data = wineLabPixels;
+
+    wineLabLoaded = true;
+
+    ESP_LOGI(TAG, "Wine Labs image decoded successfully");
+
+    return true;
+}
+
+
+///////////////////////////////////////////////////////////////////////////////////////////
+// Display the Wine Labs information panel.
+//
+static void AddWineLabImage(lv_obj_t* parent)
+{
+    if (!LoadWineLabImage())
+    {
+        return;
+    }
+
+    lv_obj_t* image = lv_image_create(parent);
+
+    lv_image_set_src(image, &wineLabDescriptor);
+    lv_image_set_pivot(image, 0, 0);
+
+    lv_obj_set_pos(
+        image,
+        S(WINELAB_X),
+        S(WINELAB_Y)
+    );
+
+    lv_image_set_scale(image, screenSize * 256 / 800);
+
+    lv_obj_set_clickable(image, false);
+    lv_obj_set_scrollable(image, false);
+}
+
+void WineDetailsScreenSetCurrentYear(int year)
+{
+    if (year < 2020 || year > 2100)
+    {
+        return;
+    }
+
+    g_wineReadingYear.store(year);
+
+    ESP_LOGI(TAG, "Wine reading calendar year: %d", year);
 }

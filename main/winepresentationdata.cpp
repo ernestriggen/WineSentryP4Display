@@ -53,64 +53,82 @@ static std::string GetDisplayWineName(
 // ["cherry", "blackcurrant", "leather"]. Up to five
 // valid string descriptors are displayed on this screen.
 // Storage belongs to the caller and survives WineDetailsScreenShow().
+
 static void ParseKeywords(
     const std::string& json,
-    std::array<std::string, 5>& output
-)
+    std::array<std::string, 5>& output)
 {
+    output.fill(std::string());
+
     if (json.empty() || json.size() > 2048)
     {
         return;
     }
 
     cJSON* root = cJSON_Parse(json.c_str());
+
     if (!cJSON_IsArray(root))
     {
-        cJSON_Delete(root);
         ESP_LOGW(TAG, "Invalid keyword array: %.80s", json.c_str());
+        cJSON_Delete(root);
         return;
     }
 
-    int count = 0;
+    size_t count = 0;
     const cJSON* item = nullptr;
+
     cJSON_ArrayForEach(item, root)
     {
+        if (count >= output.size())
+        {
+            break;
+        }
+
         const char* text = cJSON_GetStringValue(item);
-        if (text == nullptr || text[0] == '\0')
+
+        if (text == nullptr)
         {
             continue;
         }
 
-        // Strict keyword characters; no paths, whitespace or punctuation.
         const size_t length = strlen(text);
-        if (length == 0 || length > 32)
+
+        if (length == 0 || length > 96)
         {
             continue;
         }
 
-        bool valid = true;
-        for (const char* p = text; *p != '\0'; ++p)
+        // Allow spaces, punctuation and UTF-8 text.
+        // Reject control characters.
+        bool safe = true;
+
+        for (const unsigned char* p =
+                 reinterpret_cast<const unsigned char*>(text);
+             *p != 0; ++p)
         {
-            if (!(*p >= 'a' && *p <= 'z') && *p != '_')
+            if (*p < 0x20 || *p == 0x7F)
             {
-                valid = false;
+                safe = false;
                 break;
             }
         }
 
-        if (!valid)
+        if (!safe)
         {
             continue;
         }
 
+        // Keep the ORIGINAL description from OpenAI.
         output[count++] = text;
-        if (count == static_cast<int>(output.size()))
-        {
-            break;
-        }
     }
 
     cJSON_Delete(root);
+
+    ESP_LOGI(
+        TAG,
+        "Stored %u original wine descriptors",
+        static_cast<unsigned>(count)
+    );
 }
 
 
@@ -150,10 +168,12 @@ static WinePresentationData AssembleWinePresentationData(
     {
         char value[32] = {};
 
+        const char *f = (message.price < 1000.00) ? "~$%.2f" : "~$%.0f";
+
         snprintf(
             value,
             sizeof(value),
-            "~$%.2f",
+            f,
             message.price
         );
 
