@@ -31,6 +31,8 @@ struct WinePresentationData
 
     std::array<std::string, 5> aromas = {};
     std::array<std::string, 5> palate = {};
+    std::array<std::string, 5> aromaIcons = {};
+    std::array<std::string, 5> palateIcons = {};
 
     std::vector<uint8_t> labelJpeg;
 };

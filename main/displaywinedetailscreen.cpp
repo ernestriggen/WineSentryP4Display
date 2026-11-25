@@ -134,165 +134,68 @@ static void ClearIconBuffers()
     }
 }
 
-struct IconDefinition
+static bool IsValidIconId(const char* iconId)
 {
-    const char* id;
-    const char* caption;
-};
-
-static constexpr IconDefinition ICON_DEFINITIONS[] =
-{
-    {"peach", "Peach"},
-    {"apricot", "Apricot"},
-    {"cherry", "Cherry"},
-    {"blackcurrant", "Blackcurrant"},
-    {"blackberry", "Blackberry"},
-    {"plum", "Plum"},
-    {"apple", "Apple"},
-    {"pear", "Pear"},
-    {"citrus", "Citrus"},
-    {"brioche", "Brioche"},
-    {"floral", "Floral"},
-    {"violet", "Violet"},
-    {"vanilla", "Vanilla"},
-    {"cedar", "Cedar"},
-    {"tobacco", "Tobacco"},
-    {"leather", "Leather"},
-    {"oak", "Oak"},
-    {"spice", "Spice"},
-    {"mineral", "Mineral"},
-    {"honey", "Honey"},
-    {"almond", "Almond"},
-    {"chocolate", "Chocolate"},
-    {"coffee", "Coffee"},
-    {"dark_fruit", "Dark Fruit"},
-    {"red_fruit", "Red Fruit"},
-    {"creamy", "Creamy"},
-    {"tannins", "Tannins"},
-    {"acidity", "Acidity"},
-    {"full_body", "Full Body"},
-    {"crisp", "Crisp"},
-    {"smooth", "Smooth"},
-    {"long_finish", "Long Finish"},
-};
-
-// Create a lookup key ONLY for choosing an existing P4 icon.
-// The original aroma/palate phrase is never modified for display.
-static std::string IconLookupKey(const char* text)
-{
-    std::string key;
-    bool separator = false;
-
-    if (text == nullptr)
+    if (iconId == nullptr)
     {
-        return key;
+        return false;
     }
 
-    for (const unsigned char* p =
-             reinterpret_cast<const unsigned char*>(text);
-         *p != 0; ++p)
-    {
-        unsigned char c = *p;
+    const size_t length = strlen(iconId);
 
-        if (c >= 'A' && c <= 'Z')
-        {
-            c = static_cast<unsigned char>(c - 'A' + 'a');
-        }
+    //
+    // 27 characters plus ".jpg" = 31 bytes.
+    //
+    if (length == 0 || length > 27)
+    {
+        return false;
+    }
+
+    for (const char* p = iconId; *p != '\0'; ++p)
+    {
+        const char c = *p;
 
         if ((c >= 'a' && c <= 'z') ||
-            (c >= '0' && c <= '9'))
-        {
-            if (separator && !key.empty())
-            {
-                key.push_back(' ');
-            }
-
-            key.push_back(static_cast<char>(c));
-            separator = false;
-        }
-        else
-        {
-            separator = true;
-        }
-    }
-
-    return key;
-}
-
-// Deliberately small, explicit semantic aliases.
-// An unmatched phrase is still displayed, simply without artwork.
-struct IconAlias
-{
-    const char* phrase;
-    const char* iconId;
-};
-
-static constexpr IconAlias ICON_ALIASES[] =
-{
-    {"blackberries", "blackberry"},
-    {"black cherries", "cherry"},
-    {"dark cherries", "cherry"},
-    {"red cherries", "cherry"},
-    {"cassis", "blackcurrant"},
-    {"toasted oak", "oak"},
-    {"black fruit", "dark_fruit"},
-    {"fine tannin structure", "tannins"},
-    {"velvety texture", "smooth"},
-    {"suave texture", "smooth"},
-    {"gunflint", "mineral"},
-    {"wet stones", "mineral"},
-};
-
-static const IconDefinition* FindIcon(const char* phrase)
-{
-    const std::string lookup = IconLookupKey(phrase);
-
-    if (lookup.empty())
-    {
-        return nullptr;
-    }
-
-    // Exact match to an existing SPIFFS icon ID.
-    for (const IconDefinition& definition : ICON_DEFINITIONS)
-    {
-        if (lookup == IconLookupKey(definition.id))
-        {
-            return &definition;
-        }
-    }
-
-    // Phrases whose meaning is well represented by an existing icon.
-    for (const IconAlias& alias : ICON_ALIASES)
-    {
-        if (lookup != alias.phrase)
+            (c >= '0' && c <= '9') ||
+            c == '_')
         {
             continue;
         }
 
-        for (const IconDefinition& definition : ICON_DEFINITIONS)
-        {
-            if (strcmp(alias.iconId, definition.id) == 0)
-            {
-                return &definition;
-            }
-        }
+        return false;
     }
 
-    return nullptr;
+    return true;
 }
 
-static bool LoadIcon(WineDetailIcon& destination, const char* keyword)
+static bool LoadIcon(
+    WineDetailIcon& destination,
+    const char* iconId)
 {
-    // Only trusted, known filenames may be used to access SPIFFS.
-    if (FindIcon(keyword) == nullptr)
+    if (!IsValidIconId(iconId))
     {
-        ESP_LOGW(TAG, "Unrecognized wine icon: %s", keyword ? keyword : "(null)");
+        ESP_LOGW(
+            TAG,
+            "Invalid wine icon ID: %s",
+            iconId ? iconId : "(null)"
+        );
+
         return false;
     }
 
     char path[80] = {};
-    snprintf(path, sizeof(path), "/spiffs/%s.jpg", keyword);
 
+    snprintf(
+        path,
+        sizeof(path),
+        "/spiffs/icons/%s.jpg",
+        iconId
+    );
+
+    //
+    // Existing JPEG loading and decoding code
+    // continues unchanged from here.
+    //
     FILE* file = fopen(path, "rb");
     if (file == nullptr)
     {
@@ -405,16 +308,27 @@ static bool LoadIcon(WineDetailIcon& destination, const char* keyword)
     destination.descriptor.header.h = ICON_FILE_SIZE;
     destination.descriptor.data_size = ICON_PIXELS_BYTES;
     destination.descriptor.data = destination.pixels;
-    ESP_LOGI(TAG, "Wine icon decoded: %s", keyword);
+    ESP_LOGI(TAG, "Wine icon decoded: %s", path);
     return true;
 }
 
-// Draw up to five ORIGINAL descriptors, in the order OpenAI returned them.
-// A missing icon is not a reason to remove the descriptor.
+
+//
+// Display up to five WineSentry descriptors.
+//
+// The Dart imaging backend supplies:
+//   labels[]  - The caption to display.
+//   iconIds[] - The SPIFFS icon identifier.
+//
+// An empty icon ID means display text only.
+// No phrase interpretation or normalization happens here.
+//
+
 static void AddIconRow(
     lv_obj_t* parent,
     int imageY,
-    const std::array<std::string, 5>& tags,
+    const std::array<std::string, 5>& labels,
+    const std::array<std::string, 5>& iconIds,
     int firstSlot)
 {
     static constexpr int COLUMN_CENTERS[5][5] =
@@ -429,10 +343,13 @@ static void AddIconRow(
     int indices[5] = {};
     int count = 0;
 
-    // Count every supplied descriptor, not just those with icon files.
+    //
+    // Count descriptors that have display captions.
+    // An icon is NOT required.
+    //
     for (int i = 0; i < 5; ++i)
     {
-        if (!tags[i].empty())
+        if (!labels[i].empty())
         {
             indices[count++] = i;
         }
@@ -443,58 +360,80 @@ static void AddIconRow(
         return;
     }
 
+    //
+    // Display each caption and its associated icon.
+    //
     for (int column = 0; column < count; ++column)
     {
         const int i = indices[column];
         const int centerX = COLUMN_CENTERS[count - 1][column];
-        const std::string& descriptor = tags[i];
-        const IconDefinition* definition = FindIcon(descriptor.c_str());
 
-        if (definition != nullptr)
+        const std::string& caption = labels[i];
+        const std::string& iconId = iconIds[i];
+
+        //
+        // Display icon only when the backend supplied one.
+        //
+        if (!iconId.empty())
         {
-            // Icon path is derived ONLY from our trusted icon dictionary.
             WineDetailIcon& icon = iconSlots[firstSlot + i];
 
-            if (LoadIcon(icon, definition->id))
+            if (LoadIcon(icon, iconId.c_str()))
             {
                 lv_obj_t* image = lv_image_create(parent);
+
                 lv_image_set_src(image, &icon.descriptor);
                 lv_image_set_pivot(image, 0, 0);
+
                 lv_image_set_scale(
                     image,
-                    ICON_DRAW_SIZE * 256 / ICON_FILE_SIZE * screenSize / 800
+                    ICON_DRAW_SIZE * 256 /
+                    ICON_FILE_SIZE * screenSize / 800
                 );
+
                 lv_obj_set_pos(
                     image,
                     S(centerX - ICON_DRAW_SIZE / 2),
                     S(imageY)
                 );
+
                 lv_obj_set_clickable(image, false);
                 lv_obj_set_scrollable(image, false);
             }
             else
             {
-                ESP_LOGW(TAG, "Icon unavailable for: %s", descriptor.c_str());
+                ESP_LOGW(
+                    TAG,
+                    "Icon unavailable: %s for %s",
+                    iconId.c_str(),
+                    caption.c_str()
+                );
             }
         }
         else
         {
-            ESP_LOGI(TAG, "Text-only wine descriptor: %s", descriptor.c_str());
+            ESP_LOGI(
+                TAG,
+                "No icon assigned: %s",
+                caption.c_str()
+            );
         }
 
-        // Always display the ORIGINAL phrase, even if no icon exists.
+        //
+        // Always display the backend-provided caption.
+        // No interpretation or substitution on the P4.
+        //
         AddText(
             parent,
             centerX - 55,
             imageY + ICON_DRAW_SIZE + 2,
             110,
-            descriptor.c_str(),
+            caption.c_str(),
             WHITE,
             true
         );
     }
 }
-
 // ----------------------------------------------------------
 // Wine label JPEG: decoded outside the LVGL lock, displayed
 // inside the gold frame already baked into the background.
@@ -1261,14 +1200,20 @@ void WineDetailsScreenShow(const WinePresentationData& wine)
         AddText(detailsScreen, TEST_RATING_X + 20, TEST_RATING_Y + 20, 80, ratingText, GOLD, false, true);
     }
 
-    // Retail value.
-    AddText(detailsScreen, 650, 350, 230, wine.reportedValue.c_str(), WHITE, false, false);
-    AddText(detailsScreen, 650, 330, 230, wine.vintage.c_str(), WHITE, false, false);
+    // Right data frame
+
+// Vintage heading - small gold lettering.
+lv_obj_t* vintageHeading = AddText(detailsScreen, 650, 335, 230, "Vintage", GOLD, false, false);
+lv_obj_set_style_text_font(vintageHeading, &lv_font_montserrat_12, 0);
+AddText(detailsScreen, 650, 355, 230, wine.vintage.c_str(), WHITE, false, false);
+
+// Vintage value - white lettering.
+lv_obj_t* valueHeading = AddText(detailsScreen, 650, 390, 230, "Value", GOLD, false, false);
+lv_obj_set_style_text_font(valueHeading, &lv_font_montserrat_12, 0);
+AddText(detailsScreen, 650, 410, 230, wine.reportedValue.c_str(), WHITE, false, false);
 
 
-
-if (wine.drinkingWindowStart > 0 &&
-    wine.drinkingWindowEnd > wine.drinkingWindowStart)
+if (wine.drinkingWindowStart > 0 && wine.drinkingWindowEnd > wine.drinkingWindowStart)
 {
     const int startYear = wine.drinkingWindowStart;
     const int endYear = wine.drinkingWindowEnd;
@@ -1375,9 +1320,21 @@ if (wine.drinkingWindowStart > 0 &&
     lv_obj_set_style_text_font(credit, &lv_font_montserrat_12, 0);
 
     // Aroma and palate icons.
-    AddIconRow(detailsScreen, 466, wine.aromas, 0);
-    AddIconRow(detailsScreen, 574, wine.palate, 5);
+AddIconRow(
+    detailsScreen,
+    466,
+    wine.aromas,
+    wine.aromaIcons,
+    0
+);
 
+AddIconRow(
+    detailsScreen,
+    574,
+    wine.palate,
+    wine.palateIcons,
+    5
+);
     // Prepare the wine label from the presentation data.
     if (!wine.labelJpeg.empty())
     {

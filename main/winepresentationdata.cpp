@@ -54,6 +54,55 @@ static std::string GetDisplayWineName(
 // valid string descriptors are displayed on this screen.
 // Storage belongs to the caller and survives WineDetailsScreenShow().
 
+static void ParseWineDescriptors(
+    const std::string& json,
+    std::array<std::string, 5>& labels,
+    std::array<std::string, 5>& icons)
+{
+    if (json.empty())
+    {
+        return;
+    }
+
+    cJSON* root = cJSON_Parse(json.c_str());
+
+    if (!cJSON_IsArray(root))
+    {
+        cJSON_Delete(root);
+        return;
+    }
+
+    for (int i = 0; i < 5; i++)
+    {
+        const cJSON* item = cJSON_GetArrayItem(root, i);
+
+        if (!cJSON_IsObject(item))
+        {
+            continue;
+        }
+
+        const char* label = cJSON_GetStringValue(
+            cJSON_GetObjectItemCaseSensitive(item, "label")
+        );
+
+        const char* icon = cJSON_GetStringValue(
+            cJSON_GetObjectItemCaseSensitive(item, "icon")
+        );
+
+        if (label != nullptr)
+        {
+            labels[i] = label;
+        }
+
+        if (icon != nullptr)
+        {
+            icons[i] = icon;
+        }
+    }
+
+    cJSON_Delete(root);
+}
+
 static void ParseKeywords(
     const std::string& json,
     std::array<std::string, 5>& output)
@@ -181,9 +230,17 @@ static WinePresentationData AssembleWinePresentationData(
     }
 
     // Aromas and tasting characteristics
-    ParseKeywords(message.aromaKeywords, wine.aromas);
-    ParseKeywords(message.tasteKeywords, wine.palate);
+ParseWineDescriptors(
+    message.aromaKeywords,
+    wine.aromas,
+    wine.aromaIcons
+);
 
+ParseWineDescriptors(
+    message.tasteKeywords,
+    wine.palate,
+    wine.palateIcons
+);
     return wine;
 }
 

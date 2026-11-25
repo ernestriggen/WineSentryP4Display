@@ -191,7 +191,7 @@ static bool decode_frame(
     char path[64];
 
     snprintf(path, sizeof(path),
-             "/spiffs/frame_%03d.jpg", frame_number);
+             "/spiffs/splash/frame_%03d.jpg", frame_number);
 
     FILE *file = fopen(path, "rb");
 

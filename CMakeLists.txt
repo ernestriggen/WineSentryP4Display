@@ -24,4 +24,4 @@ target_compile_options(
     PRIVATE
     -Wno-error=cpp
 )
-spiffs_create_partition_image(storage splash FLASH_IN_PROJECT)
+spiffs_create_partition_image(storage spiffs FLASH_IN_PROJECT)
